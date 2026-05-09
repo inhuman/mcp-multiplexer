@@ -1,0 +1,283 @@
+package mcpx
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"maps"
+	"slices"
+	"sync"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// Multiplexer connects to multiple MCP servers and exposes a unified API for
+// listing and invoking tools across them.
+type Multiplexer struct {
+	mu        sync.RWMutex
+	servers   map[string]*serverEntry
+	kindHints map[string][]string
+	cancel    context.CancelFunc
+	opts      *options
+}
+
+type serverEntry struct {
+	config  ServerConfig
+	session *mcp.ClientSession
+	tools   []ToolInfo
+}
+
+// New connects to all servers in cfg, caches their tool lists, and returns a
+// ready Multiplexer. Errors from individual servers are logged but do not
+// prevent the rest from initialising. Inspect ServerNames() to see which
+// servers are live.
+func New(ctx context.Context, cfg MultiplexerConfig, opts ...Option) (*Multiplexer, error) {
+	o := defaultOptions()
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+
+	mx := &Multiplexer{
+		servers:   make(map[string]*serverEntry, len(cfg.Servers)),
+		kindHints: cfg.KindHints,
+		cancel:    cancel,
+		opts:      o,
+	}
+
+	seen := make(map[string]bool, len(cfg.Servers))
+	for _, sc := range cfg.Servers {
+		if err := sc.validate(); err != nil {
+			cancel()
+			return nil, err
+		}
+		if seen[sc.Name] {
+			cancel()
+			return nil, fmt.Errorf("mcpx: duplicate server name: %s", sc.Name)
+		}
+		seen[sc.Name] = true
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for _, sc := range cfg.Servers {
+		if ks, ok := cfg.KindSettings[sc.Kind]; ok {
+			sc = sc.withKindDefaults(ks)
+		}
+		wg.Go(func() {
+			entry, err := mx.connect(ctx, sc)
+			if err != nil {
+				o.logger.Error("mcpx: failed to connect", F("server", sc.Name), F("error", err.Error()))
+				return
+			}
+			mu.Lock()
+			mx.servers[sc.Name] = entry
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+
+	return mx, nil
+}
+
+// KindGroup groups servers of the same kind for prompt generation or routing.
+type KindGroup struct {
+	Kind    string
+	Servers []string
+	Tools   []string
+	Hints   []string
+}
+
+// ConfigHints returns the kind_hints map from MultiplexerConfig (may be nil).
+func (mx *Multiplexer) ConfigHints() map[string][]string { return mx.kindHints }
+
+// ServerNames returns the sorted list of registered MCP server names.
+func (mx *Multiplexer) ServerNames() []string {
+	mx.mu.RLock()
+	defer mx.mu.RUnlock()
+	names := make([]string, 0, len(mx.servers))
+	for n := range mx.servers {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// KindsForServers returns unique kinds for the given server names, preserving
+// input order. If a server has no Kind set, its name is used as the kind.
+func (mx *Multiplexer) KindsForServers(names []string) []string {
+	mx.mu.RLock()
+	defer mx.mu.RUnlock()
+	seen := make(map[string]struct{}, len(names))
+	var kinds []string
+	for _, name := range names {
+		entry, ok := mx.servers[name]
+		if !ok {
+			continue
+		}
+		kind := entry.config.Kind
+		if kind == "" {
+			kind = name
+		}
+		if _, dup := seen[kind]; !dup {
+			seen[kind] = struct{}{}
+			kinds = append(kinds, kind)
+		}
+	}
+	return kinds
+}
+
+// KindGroups returns servers grouped by Kind (or by name if Kind is empty),
+// with deduplicated tool names per group. Groups are sorted by Kind.
+func (mx *Multiplexer) KindGroups() []KindGroup {
+	mx.mu.RLock()
+	defer mx.mu.RUnlock()
+
+	toolSets := make(map[string]map[string]struct{})
+	serversByKind := make(map[string][]string)
+
+	for name, entry := range mx.servers {
+		kind := entry.config.Kind
+		if kind == "" {
+			kind = name
+		}
+		serversByKind[kind] = append(serversByKind[kind], name)
+		if toolSets[kind] == nil {
+			toolSets[kind] = make(map[string]struct{})
+		}
+		for _, t := range entry.tools {
+			toolSets[kind][t.Name] = struct{}{}
+		}
+	}
+
+	kinds := slices.Sorted(maps.Keys(serversByKind))
+	groups := make([]KindGroup, 0, len(kinds))
+	for _, kind := range kinds {
+		servers := serversByKind[kind]
+		slices.Sort(servers)
+		tools := slices.Sorted(maps.Keys(toolSets[kind]))
+		groups = append(groups, KindGroup{
+			Kind:    kind,
+			Servers: servers,
+			Tools:   tools,
+			Hints:   mx.kindHints[kind],
+		})
+	}
+	return groups
+}
+
+// ToolsForServers returns ToolInfo for tools across the given server names,
+// in input order with stable per-server ordering. Each (server, tool) pair
+// appears once.
+func (mx *Multiplexer) ToolsForServers(names []string) []ToolInfo {
+	mx.mu.RLock()
+	defer mx.mu.RUnlock()
+	seen := make(map[string]struct{})
+	var result []ToolInfo
+	for _, name := range names {
+		entry, ok := mx.servers[name]
+		if !ok {
+			continue
+		}
+		for _, t := range entry.tools {
+			key := name + "/" + t.Name
+			if _, dup := seen[key]; !dup {
+				seen[key] = struct{}{}
+				result = append(result, t)
+			}
+		}
+	}
+	return result
+}
+
+// AllTools returns every (server, tool) pair across all connected servers.
+// Order is non-deterministic.
+func (mx *Multiplexer) AllTools() []ToolInfo {
+	mx.mu.RLock()
+	defer mx.mu.RUnlock()
+	var result []ToolInfo
+	for _, entry := range mx.servers {
+		result = append(result, entry.tools...)
+	}
+	return result
+}
+
+// Close shuts down all MCP sessions and stops underlying subprocesses.
+func (mx *Multiplexer) Close() {
+	mx.cancel()
+	mx.mu.Lock()
+	defer mx.mu.Unlock()
+	for name, entry := range mx.servers {
+		if err := entry.session.Close(); err != nil {
+			mx.opts.logger.Error("mcpx: close session", F("server", name), F("error", err.Error()))
+		}
+	}
+}
+
+func (mx *Multiplexer) connect(ctx context.Context, cfg ServerConfig) (*serverEntry, error) {
+	transport, err := newTransport(ctx, cfg, mx.opts)
+	if err != nil {
+		return nil, err
+	}
+
+	client := mcp.NewClient(&mcp.Implementation{
+		Name:    mx.opts.clientName,
+		Version: mx.opts.clientVersion,
+	}, nil)
+
+	session, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		return nil, fmt.Errorf("connect %s: %w", cfg.Name, err)
+	}
+
+	tools, err := mx.fetchTools(ctx, cfg.Name, session)
+	if err != nil {
+		_ = session.Close()
+		return nil, fmt.Errorf("list tools %s: %w", cfg.Name, err)
+	}
+
+	return &serverEntry{config: cfg, session: session, tools: tools}, nil
+}
+
+func (mx *Multiplexer) fetchTools(ctx context.Context, serverName string, session *mcp.ClientSession) ([]ToolInfo, error) {
+	result, err := session.ListTools(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	infos := make([]ToolInfo, 0, len(result.Tools))
+	for _, t := range result.Tools {
+		info := ToolInfo{
+			Server:      serverName,
+			Name:        t.Name,
+			Description: t.Description,
+		}
+		if t.InputSchema != nil {
+			if raw, err := json.Marshal(t.InputSchema); err == nil {
+				info.InputSchema = raw
+			}
+		}
+		if a := t.Annotations; a != nil {
+			info.ReadOnly = a.ReadOnlyHint
+			// DestructiveHint defaults to true for non-read-only tools per MCP spec.
+			info.Destructive = a.DestructiveHint == nil || *a.DestructiveHint
+			info.Idempotent = a.IdempotentHint
+			if a.OpenWorldHint != nil {
+				info.OpenWorld = *a.OpenWorldHint
+			}
+		} else {
+			// Conservative default: assume non-readonly + destructive when
+			// the server doesn't advertise annotations.
+			info.Destructive = true
+		}
+		// Derived flag: a tool that mutates state without being destructive.
+		info.Write = !info.ReadOnly && !info.Destructive
+
+		for _, enricher := range mx.opts.metaEnrichers {
+			info = enricher(ctx, serverName, info)
+		}
+		infos = append(infos, info)
+	}
+	return infos, nil
+}
