@@ -8,7 +8,7 @@ package sloglog
 import (
 	"log/slog"
 
-	"github.com/inhuman/mcp-multiplexer"
+	mcpx "github.com/inhuman/mcp-multiplexer"
 )
 
 // New wraps a slog.Logger as an mcpx.Logger.

@@ -147,6 +147,25 @@ if err != nil { /* ... */ }
 res, err := view.CallTool(ctx, "fs", "read_file", args)
 ```
 
+## Testing
+
+```bash
+# Unit + in-process integration (default; no docker required):
+go test -race -cover ./...
+
+# Full set including container-based stdio lifecycle:
+go test -tags integration_docker -race ./...
+
+# Lint with the project config (golangci-lint v2.11.4 pinned):
+golangci-lint run
+```
+
+In-process integration tests use the same `github.com/modelcontextprotocol/go-sdk`
+that production code targets — no MCP-SDK mocks. Container tests use the
+public `mcp/filesystem` image via dockertest; they are gated behind the
+`integration_docker` build tag so the default test run never pulls Docker
+into the dependency graph.
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).

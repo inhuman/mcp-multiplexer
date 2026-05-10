@@ -6,8 +6,9 @@
 package zaplog
 
 import (
-	"github.com/inhuman/mcp-multiplexer"
 	"go.uber.org/zap"
+
+	mcpx "github.com/inhuman/mcp-multiplexer"
 )
 
 // New wraps a zap.Logger as an mcpx.Logger.
