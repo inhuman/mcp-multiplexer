@@ -36,21 +36,22 @@ func newStdioTransport(ctx context.Context, cfg ServerConfig) mcp.Transport {
 func newHTTPTransport(cfg ServerConfig, opts *options) mcp.Transport {
 	return &mcp.StreamableClientTransport{
 		Endpoint:   cfg.URL,
-		HTTPClient: retryableHTTPClient(cfg.Token, cfg.TokenHeader, opts),
+		HTTPClient: retryableHTTPClient(cfg, opts),
 	}
 }
 
 func newSSETransport(cfg ServerConfig, opts *options) mcp.Transport {
 	return &mcp.SSEClientTransport{
 		Endpoint:   cfg.URL,
-		HTTPClient: retryableHTTPClient(cfg.Token, cfg.TokenHeader, opts),
+		HTTPClient: retryableHTTPClient(cfg, opts),
 	}
 }
 
 // retryableHTTPClient builds an *http.Client with exponential-backoff retries
-// for transient errors (connection refused, 502/503/504). Token injection is
-// added via tokenRoundTripper wrapping the retryable transport.
-func retryableHTTPClient(token, header string, opts *options) *http.Client {
+// for transient errors (connection refused, 502/503/504). When cfg.Auth is
+// non-nil, the transport is wrapped with authFuncRoundTripper that delegates
+// to opts.authFunc on every outbound request.
+func retryableHTTPClient(cfg ServerConfig, opts *options) *http.Client {
 	rc := retryablehttp.NewClient()
 	rc.RetryMax = opts.httpRetryMax
 	rc.RetryWaitMin = 1 * time.Second
@@ -58,40 +59,59 @@ func retryableHTTPClient(token, header string, opts *options) *http.Client {
 	rc.Logger = &leveledLoggerAdapter{log: opts.logger}
 
 	base := rc.StandardClient()
-	if token == "" {
+	if cfg.Auth == nil {
 		return base
 	}
-	base.Transport = &tokenRoundTripper{token: token, header: header, base: base.Transport}
+	base.Transport = &authFuncRoundTripper{
+		server: cfg.Name,
+		data:   cfg.Auth,
+		fn:     opts.authFunc,
+		base:   base.Transport,
+	}
 	return base
 }
 
-// tokenRoundTripper injects an auth header into every request.
-//
-// If header is empty or "Authorization", sends `Authorization: Bearer <token>`.
-// Otherwise sends the header verbatim with the raw token value (e.g.
-// `X-MCP-AUTH: <token>`).
-type tokenRoundTripper struct {
-	header string
-	token  string
+// authFuncRoundTripper invokes the user-supplied AuthFunc on every outbound
+// request. It clones the request before mutation so retryablehttp can safely
+// resubmit on transient errors and concurrent callers do not race on
+// header state.
+type authFuncRoundTripper struct {
+	server string
+	data   map[string]any
+	fn     AuthFunc
 	base   http.RoundTripper
 }
 
-func (t *tokenRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
-	if t.token != "" {
-		r = r.Clone(r.Context())
-		if t.header == "" || t.header == "Authorization" {
-			r.Header.Set("Authorization", "Bearer "+t.token)
-		} else {
-			r.Header.Set(t.header, t.token)
-		}
+func (a *authFuncRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	cloned := r.Clone(r.Context())
+	if err := a.fn(r.Context(), a.server, cloned, a.data); err != nil {
+		return nil, fmt.Errorf("mcpx: auth %s: %w", a.server, err)
 	}
-	return t.base.RoundTrip(r)
+	return a.base.RoundTrip(cloned)
 }
 
-// BearerRoundTripper returns an http.RoundTripper that injects a
+// BearerRoundTripper returns an http.RoundTripper that injects an
 // `Authorization: Bearer <token>` header into every request.
+//
+// This is a low-level helper for users assembling their own *http.Client
+// outside the [ServerConfig] flow. For the config-driven path, prefer
+// [WithAuthFunc] together with the auth.Bearer helper from
+// github.com/inhuman/mcp-multiplexer/auth.
 func BearerRoundTripper(token string, base http.RoundTripper) http.RoundTripper {
-	return &tokenRoundTripper{token: token, base: base}
+	return &bearerRoundTripper{token: token, base: base}
+}
+
+type bearerRoundTripper struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (t *bearerRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	if t.token != "" {
+		r = r.Clone(r.Context())
+		r.Header.Set("Authorization", "Bearer "+t.token)
+	}
+	return t.base.RoundTrip(r)
 }
 
 // leveledLoggerAdapter bridges Logger to retryablehttp.LeveledLogger.

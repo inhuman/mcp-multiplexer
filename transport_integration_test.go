@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	mcpx "github.com/inhuman/mcp-multiplexer"
+	"github.com/inhuman/mcp-multiplexer/auth"
 	"github.com/inhuman/mcp-multiplexer/internal/testutil/mcptest"
 )
 
@@ -79,9 +80,10 @@ func TestTransport_HTTP_BearerDefault(t *testing.T) {
 
 	mx, err := mcpx.New(t.Context(), mcpx.MultiplexerConfig{
 		Servers: []mcpx.ServerConfig{
-			{Name: "s", Transport: mcpx.TransportHTTP, URL: ts.URL, Token: "secret-tok"},
+			{Name: "s", Transport: mcpx.TransportHTTP, URL: ts.URL,
+				Auth: map[string]any{"token": "secret-tok"}},
 		},
-	}, mcpx.WithHTTPRetryMax(0))
+	}, mcpx.WithHTTPRetryMax(0), mcpx.WithAuthFunc(auth.Bearer))
 	require.NoError(t, err)
 	defer mx.Close()
 
@@ -100,9 +102,10 @@ func TestTransport_HTTP_CustomHeader(t *testing.T) {
 
 	mx, err := mcpx.New(t.Context(), mcpx.MultiplexerConfig{
 		Servers: []mcpx.ServerConfig{
-			{Name: "s", Transport: mcpx.TransportHTTP, URL: ts.URL, Token: "raw-tok", TokenHeader: "X-MCP-AUTH"},
+			{Name: "s", Transport: mcpx.TransportHTTP, URL: ts.URL,
+				Auth: map[string]any{"tokenName": "X-MCP-AUTH", "value": "raw-tok"}},
 		},
-	}, mcpx.WithHTTPRetryMax(0))
+	}, mcpx.WithHTTPRetryMax(0), mcpx.WithAuthFunc(auth.HeaderToken))
 	require.NoError(t, err)
 	defer mx.Close()
 

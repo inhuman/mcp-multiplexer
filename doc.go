@@ -14,8 +14,12 @@
 //     re-establishing connections.
 //
 // Three transports are supported out of the box: stdio (subprocess),
-// http (StreamableHTTP), and sse. Authentication is per-server: bearer
-// in Authorization or in a custom header, on a per-request basis.
+// http (StreamableHTTP), and sse. Authentication is pluggable per
+// outbound HTTP/SSE request: declare an opaque `auth` block per server
+// in JSON, register a single AuthFunc via WithAuthFunc, and dispatch on
+// data["scheme"] inside your function. Subpackage
+// github.com/inhuman/mcp-multiplexer/auth ships ready-made helpers for
+// the two most common shapes (Bearer, custom header).
 //
 // The library is logger-agnostic via the Logger interface (4 methods).
 // Adapters for go.uber.org/zap and log/slog are provided as separate

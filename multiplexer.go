@@ -59,6 +59,18 @@ func New(ctx context.Context, cfg MultiplexerConfig, opts ...Option) (*Multiplex
 		seen[sc.Name] = true
 	}
 
+	if o.authFunc == nil {
+		for _, sc := range cfg.Servers {
+			if sc.Auth != nil {
+				cancel()
+				return nil, fmt.Errorf(
+					"mcpx: server %q has auth config but no AuthFunc registered "+
+						"(use mcpx.WithAuthFunc, e.g. mcpx.WithAuthFunc(auth.Bearer))",
+					sc.Name)
+			}
+		}
+	}
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 

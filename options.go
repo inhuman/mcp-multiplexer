@@ -12,6 +12,7 @@ type options struct {
 	resultTransform    []ResultTransformHook
 	metaEnrichers      []MetaEnricher
 	customTransformers map[string]CustomTransformer
+	authFunc           AuthFunc
 	callTimeout        time.Duration
 	httpRetryMax       int
 	clientName         string
@@ -85,6 +86,20 @@ func WithHTTPRetryMax(n int) Option {
 			o.httpRetryMax = n
 		}
 	}
+}
+
+// WithAuthFunc registers the global [AuthFunc] applied to every server
+// whose [ServerConfig.Auth] is non-nil. It is REQUIRED whenever any
+// server has Auth set; otherwise [New] returns an error before opening
+// any connection.
+//
+// There is no per-server registry — dispatch on data["scheme"] (or the
+// server name) inside the function if multiple schemes coexist.
+//
+// Calling WithAuthFunc more than once overwrites the previous value;
+// no chaining is provided.
+func WithAuthFunc(fn AuthFunc) Option {
+	return func(o *options) { o.authFunc = fn }
 }
 
 // WithClientIdentity overrides the MCP client name/version sent during

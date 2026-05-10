@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	mcpx "github.com/inhuman/mcp-multiplexer"
+	"github.com/inhuman/mcp-multiplexer/auth"
 	"github.com/inhuman/mcp-multiplexer/internal/testutil/capturelog"
 	"github.com/inhuman/mcp-multiplexer/internal/testutil/mcptest"
 )
@@ -116,8 +117,9 @@ func TestSecurity_TokenNotInLogsOrErrors(t *testing.T) {
 
 	log := capturelog.New()
 	mx, err := mcpx.New(t.Context(), mcpx.MultiplexerConfig{
-		Servers: []mcpx.ServerConfig{{Name: "s", Transport: mcpx.TransportHTTP, URL: ts.URL, Token: tokenSecret}},
-	}, mcpx.WithLogger(log), mcpx.WithHTTPRetryMax(0))
+		Servers: []mcpx.ServerConfig{{Name: "s", Transport: mcpx.TransportHTTP, URL: ts.URL,
+			Auth: map[string]any{"token": tokenSecret}}},
+	}, mcpx.WithLogger(log), mcpx.WithHTTPRetryMax(0), mcpx.WithAuthFunc(auth.Bearer))
 	require.NoError(t, err)
 	defer mx.Close()
 
@@ -133,4 +135,29 @@ func TestSecurity_TokenNotInLogsOrErrors(t *testing.T) {
 		require.False(t, log.ContainsAtLevel(lvl, tokenSecret),
 			"level %s leaked token", lvl)
 	}
+}
+
+// TestSecurity_AuthValuesNotInMisconfigError ensures that values from
+// ServerConfig.Auth do not leak into the error returned by mcpx.New when
+// the consumer forgot to register WithAuthFunc.
+func TestSecurity_AuthValuesNotInMisconfigError(t *testing.T) {
+	const sensitive = "super-secret-marker-7891"
+
+	_, err := mcpx.New(t.Context(), mcpx.MultiplexerConfig{
+		Servers: []mcpx.ServerConfig{
+			{Name: "k8s", Transport: mcpx.TransportHTTP, URL: "http://x",
+				Auth: map[string]any{
+					"token":     sensitive,
+					"clientId":  sensitive + "-id",
+					"someOther": sensitive + "-other",
+				}},
+		},
+	})
+	require.Error(t, err)
+	// Error mentions the server name as a hint.
+	require.Contains(t, err.Error(), `"k8s"`)
+	require.Contains(t, err.Error(), "WithAuthFunc")
+	// But never any value from Auth.
+	require.NotContains(t, err.Error(), sensitive,
+		"misconfig error must not leak Auth values: %q", err.Error())
 }

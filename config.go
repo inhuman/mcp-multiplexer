@@ -43,13 +43,20 @@ type ServerConfig struct {
 	Env    []string `json:"env,omitempty"` // additional env vars for the subprocess
 
 	// HTTP/SSE only.
-	URL   string `json:"url,omitempty"`
-	Token string `json:"token,omitempty"`
-	// TokenHeader is the HTTP header name for the token. When empty or set to
-	// "Authorization", the token is sent as `Authorization: Bearer <token>`.
-	// For servers that expect the raw token in a custom header (e.g.
-	// `X-MCP-AUTH: <token>`), set TokenHeader to that header name.
-	TokenHeader string `json:"token_header,omitempty"`
+	URL string `json:"url,omitempty"`
+
+	// Auth is an opaque parameter block read verbatim from the JSON "auth"
+	// field. The library does not interpret its shape — it is forwarded
+	// as-is to the AuthFunc registered via [WithAuthFunc].
+	//
+	// When non-nil and no AuthFunc is registered, [New] returns an error
+	// before opening any connection. Auth applies only to HTTP and SSE
+	// transports; stdio servers ignore it.
+	//
+	// Helpers covering the two most common shapes
+	// ({"token":"..."} and {"tokenName":"...","value":"..."}) ship in
+	// subpackage github.com/inhuman/mcp-multiplexer/auth.
+	Auth map[string]any `json:"auth,omitempty"`
 
 	// ArgsTransformers is an ordered list of transformations applied to tool
 	// arguments before sending. Built-in names: "camelCase", "joinArrays",
