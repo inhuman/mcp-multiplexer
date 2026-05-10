@@ -7,7 +7,7 @@ MCP multiplexer for Go — connect to many [Model Context Protocol](https://mode
 ## Features
 
 - **Multiple servers, one API.** Aggregate tools from any number of MCP servers behind a single `Multiplexer`.
-- **Three transports.** `stdio` (subprocess), `http` (StreamableHTTP), and `sse`. Bearer auth or custom token header out of the box.
+- **Three transports.** `stdio` (subprocess), `http` (StreamableHTTP), and `sse`. Pluggable per-request auth (Bearer / custom header / OAuth2 / your own).
 - **Kind grouping.** Tag servers with a `Kind` (e.g. `kubernetes`, `gitlab`) and the multiplexer deduplicates tool lists per kind — handy for prompt generation.
 - **Argument transformers.** Built-in `camelCase`, `joinArrays`, `singularResourceType`. Register your own via `WithArgsTransformer`.
 - **Field maps.** Rename argument keys per-server before they hit the wire.
@@ -33,6 +33,7 @@ import (
     "os"
 
     mcpx "github.com/inhuman/mcp-multiplexer"
+    "github.com/inhuman/mcp-multiplexer/auth"
     "github.com/inhuman/mcp-multiplexer/log/sloglog"
 )
 
@@ -52,13 +53,14 @@ func main() {
                 Name:      "weather",
                 Transport: mcpx.TransportHTTP,
                 URL:       "https://example.com/mcp",
-                Token:     os.Getenv("WEATHER_TOKEN"),
+                Auth:      map[string]any{"token": os.Getenv("WEATHER_TOKEN")},
             },
         },
     }
 
     mx, err := mcpx.New(ctx, cfg,
         mcpx.WithLogger(sloglog.New(slog.Default())),
+        mcpx.WithAuthFunc(auth.Bearer),
     )
     if err != nil {
         panic(err)
@@ -124,6 +126,56 @@ mcpx.WithMetaEnricher(func(ctx context.Context, server string, info mcpx.ToolInf
 | `Custom`      | User-supplied labels added by a `MetaEnricher`.                   |
 
 Use these in your `BeforeCall` hook to drive policy decisions (e.g. require approval for `Destructive` tools, log every `OpenWorld` call).
+
+## Auth
+
+Per-server authentication is configured declaratively in `ServerConfig.Auth`
+(opaque map, parsed from JSON `"auth"`) and applied by a single global
+`AuthFunc` registered via `mcpx.WithAuthFunc`. The library does not interpret
+the shape of `Auth` — your `AuthFunc` does. Two ready-made helpers cover the
+common cases:
+
+```go
+import "github.com/inhuman/mcp-multiplexer/auth"
+
+// Bearer — for {"auth": {"token": "..."}} → Authorization: Bearer <token>
+mcpx.WithAuthFunc(auth.Bearer)
+
+// HeaderToken — for {"auth": {"tokenName": "X-MCP-AUTH", "value": "..."}}
+//             → X-MCP-AUTH: <value>  (no Bearer prefix)
+mcpx.WithAuthFunc(auth.HeaderToken)
+```
+
+For custom schemes (OAuth2 with refresh, AWS SigV4, HMAC, request-scoped JWT)
+write your own dispatcher:
+
+```go
+mcpx.WithAuthFunc(func(ctx context.Context, server string, r *http.Request, data map[string]any) error {
+    switch data["scheme"] {
+    case "bearer":
+        return auth.Bearer(ctx, server, r, data)
+    case "oauth2":
+        return mySignWithOAuth2(ctx, r, data)
+    default:
+        return fmt.Errorf("unknown scheme for %s: %v", server, data["scheme"])
+    }
+})
+```
+
+`AuthFunc` is called per outbound HTTP request including retries — cache
+expensive token derivation inside your function. If a server has `Auth` set
+but no `WithAuthFunc` was registered, `mcpx.New` returns an error before
+opening any connection (security-relevant misconfig fails loud).
+
+### Migrating from v0.0.x
+
+The pre-v0.1.0 `ServerConfig.Token` / `ServerConfig.TokenHeader` fields are
+removed. Translation:
+
+| v0.0.x JSON                                    | v0.1.0 JSON                                          | + Code                                  |
+|------------------------------------------------|------------------------------------------------------|-----------------------------------------|
+| `{"token": "x"}`                               | `{"auth": {"token": "x"}}`                           | `mcpx.WithAuthFunc(auth.Bearer)`        |
+| `{"token": "x", "token_header": "X-MCP-AUTH"}` | `{"auth": {"tokenName": "X-MCP-AUTH", "value": "x"}}`| `mcpx.WithAuthFunc(auth.HeaderToken)`   |
 
 ## Logger shims
 

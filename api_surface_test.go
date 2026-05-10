@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	mcpx "github.com/inhuman/mcp-multiplexer"
+	"github.com/inhuman/mcp-multiplexer/auth"
 )
 
 // Anchor references for symbol coverage; values are not invoked.
@@ -24,6 +25,8 @@ var (
 	_ mcpx.ResultTransformHook = func(_ context.Context, _ string, _ mcpx.ToolInfo, t string) (string, error) { return t, nil }
 	_ mcpx.MetaEnricher        = func(_ context.Context, _ string, info mcpx.ToolInfo) mcpx.ToolInfo { return info }
 	_ mcpx.CustomTransformer   = func(args map[string]any) map[string]any { return args }
+	_ mcpx.AuthFunc            = auth.Bearer
+	_ mcpx.AuthFunc            = auth.HeaderToken
 )
 
 func TestAPISurface_NopLoggerAndField(t *testing.T) {
@@ -64,4 +67,9 @@ func TestAPISurface_WithArgsTransformerAndClientIdentity(t *testing.T) {
 	identity := mcpx.WithClientIdentity("test-client", "0.0.1")
 	require.NotNil(t, custom)
 	require.NotNil(t, identity)
+}
+
+func TestAPISurface_WithAuthFunc(t *testing.T) {
+	opt := mcpx.WithAuthFunc(auth.Bearer)
+	require.NotNil(t, opt)
 }
