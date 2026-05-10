@@ -26,7 +26,7 @@ func newTransport(ctx context.Context, cfg ServerConfig, opts *options) (mcp.Tra
 }
 
 func newStdioTransport(ctx context.Context, cfg ServerConfig) mcp.Transport {
-	cmd := exec.CommandContext(ctx, cfg.Binary, cfg.Args...) //nolint:gosec
+	cmd := exec.CommandContext(ctx, cfg.Binary, cfg.Args...) //nolint:gosec // G204: cfg.Binary is supplied by the library consumer (caller responsibility), not external untrusted input
 	if len(cfg.Env) > 0 {
 		cmd.Env = append(os.Environ(), cfg.Env...)
 	}
