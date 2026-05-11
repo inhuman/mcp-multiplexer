@@ -15,11 +15,14 @@ import (
 // Multiplexer connects to multiple MCP servers and exposes a unified API for
 // listing and invoking tools across them.
 type Multiplexer struct {
-	mu        sync.RWMutex
-	servers   map[string]*serverEntry
-	kindHints map[string][]string
-	cancel    context.CancelFunc
-	opts      *options
+	mu                 sync.RWMutex
+	servers            map[string]*serverEntry
+	kindHints          map[string][]string
+	cancel             context.CancelFunc
+	opts               *options
+	builtinCache       Cache
+	cacheScopeWarnOnce sync.Once
+	cacheTTLWarnMap    sync.Map
 }
 
 type serverEntry struct {
@@ -49,6 +52,12 @@ func New(ctx context.Context, cfg MultiplexerConfig, opts ...Option) (*Multiplex
 		kindHints: cfg.KindHints,
 		cancel:    cancel,
 		opts:      o,
+	}
+
+	// Initialize the built-in LRU unless the user provided a custom cache or
+	// disabled caching entirely.
+	if !o.cacheDisabled && o.cache == nil {
+		mx.builtinCache = newLRUCache(o.cacheSize)
 	}
 
 	if o.healthCheckSet && o.healthCheckInterval <= 0 {
@@ -97,6 +106,12 @@ func New(ctx context.Context, cfg MultiplexerConfig, opts ...Option) (*Multiplex
 			mu.Lock()
 			mx.servers[sc.Name] = entry
 			mu.Unlock()
+			if o.onConnect != nil {
+				func() {
+					defer func() { recover() }() //nolint:errcheck
+					o.onConnect(sc.Name, entry.tools)
+				}()
+			}
 		})
 	}
 	wg.Wait()

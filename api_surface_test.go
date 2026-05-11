@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -16,13 +17,19 @@ import (
 	"github.com/inhuman/mcp-multiplexer/auth"
 )
 
+// cacheStub satisfies the Cache interface for API surface pinning.
+type cacheStub struct{}
+
+func (*cacheStub) Get(_ context.Context, _ string) (*mcpx.CallResult, bool)              { return nil, false }
+func (*cacheStub) Set(_ context.Context, _ string, _ *mcpx.CallResult, _ time.Duration) {}
+
 // Anchor references for symbol coverage; values are not invoked.
 var (
 	_ mcpx.ArgsTransformer     = mcpx.ArgsTransformer("custom")
 	_ mcpx.TransportType       = mcpx.TransportHTTP
-	_ mcpx.BeforeCallHook      = func(_ context.Context, _ string, _ mcpx.ToolInfo, _ json.RawMessage) error { return nil }
-	_ mcpx.AfterCallHook       = func(_ context.Context, _ string, _ mcpx.ToolInfo, _ json.RawMessage, _ *mcpx.CallResult, _ error) {}
-	_ mcpx.ResultTransformHook = func(_ context.Context, _ string, _ mcpx.ToolInfo, t string) (string, error) { return t, nil }
+	_ mcpx.BeforeCallHook      = func(_ context.Context, _, _ string, _ mcpx.ToolInfo, _ json.RawMessage) (context.Context, *mcpx.CallResult, error) { return nil, nil, nil }
+	_ mcpx.AfterCallHook       = func(_ context.Context, _, _ string, _ mcpx.ToolInfo, _ json.RawMessage, _ *mcpx.CallResult, _ error, _ time.Duration) {}
+	_ mcpx.ResultTransformHook = func(_ context.Context, _, _ string, _ mcpx.ToolInfo, _ *mcpx.CallResult) error { return nil }
 	_ mcpx.MetaEnricher        = func(_ context.Context, _ string, info mcpx.ToolInfo) mcpx.ToolInfo { return info }
 	_ mcpx.CustomTransformer   = func(args map[string]any) map[string]any { return args }
 	_ mcpx.AuthFunc            = auth.Bearer
@@ -30,6 +37,11 @@ var (
 	_ mcpx.OnReconnectFunc     = func(_ string, _ error) {}
 	_ mcpx.ServerState         = mcpx.ServerStateConnected
 	_ mcpx.OnToolsChangedFunc  = func(_ string, _, _ []mcpx.ToolInfo) {}
+	_ mcpx.RejectReason        = mcpx.RejectUnknownServer
+	_ mcpx.OnRejectedCallFunc  = func(_ context.Context, _, _ string, _ mcpx.RejectReason, _ error) {}
+	_ mcpx.OnConnectFunc       = func(_ string, _ []mcpx.ToolInfo) {}
+	_ mcpx.Cache               = (*cacheStub)(nil)
+	_ mcpx.KeyFunc             = func(_ context.Context, _, _ string, _ json.RawMessage) string { return "" }
 )
 
 func TestAPISurface_NopLoggerAndField(t *testing.T) {

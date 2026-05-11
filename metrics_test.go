@@ -194,7 +194,7 @@ func TestMetrics_WithAfterCallCoexists(t *testing.T) {
 	m := &captureMetrics{}
 
 	var afterCallFired atomic.Bool
-	hook := mcpx.AfterCallHook(func(_ context.Context, _ string, _ mcpx.ToolInfo, _ json.RawMessage, _ *mcpx.CallResult, _ error) {
+	hook := mcpx.AfterCallHook(func(_ context.Context, _, _ string, _ mcpx.ToolInfo, _ json.RawMessage, _ *mcpx.CallResult, _ error, _ time.Duration) {
 		afterCallFired.Store(true)
 	})
 

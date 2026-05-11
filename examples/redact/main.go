@@ -15,8 +15,14 @@ import (
 var ssnPattern = regexp.MustCompile(`SSN:\s*\d{3}-\d{2}-\d{4}`)
 
 func main() {
-	redact := mcpx.ResultTransformHook(func(_ context.Context, _ string, _ mcpx.ToolInfo, text string) (string, error) {
-		return ssnPattern.ReplaceAllString(text, "SSN: [REDACTED]"), nil
+	redact := mcpx.ResultTransformHook(func(_ context.Context, _, _ string, _ mcpx.ToolInfo, result *mcpx.CallResult) error {
+		result.Text = ssnPattern.ReplaceAllString(result.Text, "SSN: [REDACTED]")
+		for i, p := range result.Parts {
+			if p.Kind == mcpx.ContentText {
+				result.Parts[i].Text = ssnPattern.ReplaceAllString(p.Text, "SSN: [REDACTED]")
+			}
+		}
+		return nil
 	})
 
 	cfg := mcpx.MultiplexerConfig{

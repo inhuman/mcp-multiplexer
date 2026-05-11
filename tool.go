@@ -1,5 +1,7 @@
 package mcpx
 
+import "bytes"
+
 // ToolInfo holds cached metadata about a single tool from an MCP server.
 //
 // The boolean flags map to MCP tool annotations (ReadOnlyHint, DestructiveHint,
@@ -50,4 +52,25 @@ type ContentPart struct {
 	MIMEType string // populated when Kind == ContentImage
 	Data     []byte // raw image bytes when Kind == ContentImage
 	Raw      []byte // JSON-encoded original for ContentOther
+}
+
+// Clone returns a deep copy of r. Each ContentPart is individually copied;
+// Data and Raw byte slices are cloned to independent allocations.
+// Clone on a nil receiver returns nil.
+func (r *CallResult) Clone() *CallResult {
+	if r == nil {
+		return nil
+	}
+	parts := make([]ContentPart, len(r.Parts))
+	for i, p := range r.Parts {
+		cp := p
+		if p.Data != nil {
+			cp.Data = bytes.Clone(p.Data)
+		}
+		if p.Raw != nil {
+			cp.Raw = bytes.Clone(p.Raw)
+		}
+		parts[i] = cp
+	}
+	return &CallResult{Text: r.Text, Parts: parts, IsError: r.IsError}
 }
