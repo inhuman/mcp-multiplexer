@@ -20,6 +20,7 @@ type options struct {
 	healthCheckInterval time.Duration // 0 = disabled
 	healthCheckSet      bool          // true when WithHealthCheck was called
 	onReconnect         OnReconnectFunc
+	onToolsChanged      OnToolsChangedFunc
 }
 
 func defaultOptions() *options {
@@ -124,6 +125,26 @@ func WithHealthCheck(interval time.Duration) Option {
 // supervisor goroutine and must not block for extended periods.
 func WithOnReconnect(fn OnReconnectFunc) Option {
 	return func(o *options) { o.onReconnect = fn }
+}
+
+// OnToolsChangedFunc is called after a successful tool-list refresh that
+// produces a different set of tools than the previously cached list.
+// server is the name of the server whose tool list changed.
+// before is a snapshot of the tool list prior to the refresh.
+// after is the updated tool list.
+//
+// The callback runs synchronously from the per-server drain goroutine and
+// must not block for extended periods. Panics inside the callback are
+// recovered by the library; the multiplexer continues operating normally.
+type OnToolsChangedFunc func(server string, before, after []ToolInfo)
+
+// WithOnToolsChanged registers a callback invoked after each successful
+// tool-list refresh that changes the cached tool list for a server.
+// The callback receives the server name and before/after snapshots.
+// Registering more than once overwrites the previous value; passing nil
+// clears any previously registered callback.
+func WithOnToolsChanged(fn OnToolsChangedFunc) Option {
+	return func(o *options) { o.onToolsChanged = fn }
 }
 
 // WithClientIdentity overrides the MCP client name/version sent during

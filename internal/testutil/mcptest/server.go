@@ -167,6 +167,20 @@ func (s *Server) addTool(srv *mcp.Server, spec ToolSpec) {
 	})
 }
 
+// AddLiveTool dynamically adds a tool to a running server and sends a
+// notifications/tools/list_changed notification to all connected clients.
+// It is safe to call after a transport adapter has been started.
+func (s *Server) AddLiveTool(spec ToolSpec) {
+	s.addTool(s.build(), spec)
+}
+
+// RemoveLiveTool removes the named tool from a running server and sends a
+// notifications/tools/list_changed notification to all connected clients.
+func (s *Server) RemoveLiveTool(name string) {
+	srv := s.build()
+	srv.RemoveTools(name)
+}
+
 // Close stops every transport that was started for this server.
 func (s *Server) Close() {
 	s.mu.Lock()

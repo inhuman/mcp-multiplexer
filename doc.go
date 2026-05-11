@@ -27,6 +27,12 @@
 // ServerStatus; CallTool short-circuits with ErrServerDown when a server is
 // marked down, avoiding unnecessary timeouts.
 //
+// The multiplexer automatically subscribes to notifications/tools/list_changed
+// from each connected server and refreshes the per-server tool cache when the
+// server's tool set changes at runtime (e.g. due to plugins, feature flags, or
+// permission changes). An optional WithOnToolsChanged callback notifies the
+// consumer after each refresh that produces a different tool list.
+//
 // The library is logger-agnostic via the Logger interface (4 methods).
 // Adapters for go.uber.org/zap and log/slog are provided as separate
 // packages under log/zaplog and log/sloglog so the core stays
