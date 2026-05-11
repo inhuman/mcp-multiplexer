@@ -846,9 +846,9 @@ func buildCacheableSrv(t *testing.T) (url string, calls *atomic.Int64) {
 	n := new(atomic.Int64)
 	tval, fval := true, false
 	srv := mcptest.NewServer(mcptest.WithTool(mcptest.ToolSpec{
-		Name:      "list",
-		ReadOnly:  &tval,
-		Idempotent: &tval,
+		Name:        "list",
+		ReadOnly:    &tval,
+		Idempotent:  &tval,
 		Destructive: &fval,
 		Handler: func(_ context.Context, _ map[string]any) (string, error) {
 			n.Add(1)
