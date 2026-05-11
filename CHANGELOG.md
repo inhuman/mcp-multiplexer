@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`Metrics` interface** — `RecordCall(server, tool string, dur time.Duration, err error)` and
+  `RecordToolList(server string, count int)`. Register an implementation via `WithMetrics(m Metrics)`.
+  Passing `nil` is a no-op. Panics inside any method are recovered by the library. Both
+  `WithMetrics` and `AfterCallHook` may be registered simultaneously.
+- **`RecordCall`** is invoked after every `CallTool` invocation (success, error, and pre-RPC
+  failures such as `ErrToolNotFound`). `dur` measures the wall-clock time of the upstream MCP
+  call only; for pre-RPC failures it is near-zero and accurately reflects that no RPC was made.
+- **`RecordToolList`** is invoked after every successful tool-list fetch — both on initial connect
+  and after a live `notifications/tools/list_changed` refresh.
+- **Auto-detected `clientInfo.version`**: the MCP handshake now advertises the consuming module's
+  real version read via `runtime/debug.ReadBuildInfo()`. Falls back to `"dev"` when build info is
+  unavailable or the version is the Go sentinel `"(devel)"` (produced by `go run` and untagged
+  builds). `WithClientIdentity` continues to override both name and version.
+
+All changes are purely additive; no existing API is modified.
+
 ## [v0.2.0] — 2026-05-11
 
 ### Added

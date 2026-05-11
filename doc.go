@@ -36,6 +36,13 @@
 // Per-server call timeouts are supported via ServerConfig.CallTimeout; a zero
 // value inherits the global default set via WithCallTimeout (30 s by default).
 //
+// Typed observability is available via the Metrics interface (RecordCall,
+// RecordToolList). Register an implementation via WithMetrics; the default
+// is a no-op. Panics inside Metrics methods are recovered by the library.
+// The MCP handshake automatically advertises the consuming module's real
+// version (read from build info); it falls back to "dev" when build info is
+// unavailable. Override both name and version with WithClientIdentity.
+//
 // The library is logger-agnostic via the Logger interface (4 methods).
 // Adapters for go.uber.org/zap and log/slog are provided as separate
 // packages under log/zaplog and log/sloglog so the core stays

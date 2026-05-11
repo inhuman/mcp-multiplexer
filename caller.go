@@ -58,6 +58,8 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 		return nil, fmt.Errorf("%w: %q", ErrServerDown, server)
 	}
 
+	start := time.Now()
+
 	var toolMeta ToolInfo
 	found := false
 	for _, ti := range entryTools {
@@ -68,7 +70,9 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 		}
 	}
 	if !found {
-		return nil, fmt.Errorf("%w: %s on server %s", ErrToolNotFound, toolName, server)
+		err := fmt.Errorf("%w: %s on server %s", ErrToolNotFound, toolName, server)
+		safeRecordCall(mx.opts.metrics, server, toolName, time.Since(start), err)
+		return nil, err
 	}
 
 	params := &mcp.CallToolParams{Name: toolName}
@@ -105,6 +109,8 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 	defer cancel()
 
 	rawResult, callErr := entrySess.CallTool(callCtx, params)
+	dur := time.Since(start)
+
 	if callErr != nil {
 		var wrapped error
 		if callCtx.Err() != nil && errors.Is(callCtx.Err(), context.DeadlineExceeded) {
@@ -115,6 +121,7 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 		mx.opts.logger.Error("mcpx: call failed",
 			F("server", server), F("tool", toolName), F("error", wrapped.Error()))
 		mx.runAfterCall(ctx, server, toolMeta, finalArgs, nil, wrapped)
+		safeRecordCall(mx.opts.metrics, server, toolName, dur, wrapped)
 		return nil, wrapped
 	}
 
@@ -124,12 +131,14 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 		newText, err := hook(ctx, server, toolMeta, result.Text)
 		if err != nil {
 			mx.runAfterCall(ctx, server, toolMeta, finalArgs, result, err)
+			safeRecordCall(mx.opts.metrics, server, toolName, dur, err)
 			return nil, err
 		}
 		result.Text = newText
 	}
 
 	mx.runAfterCall(ctx, server, toolMeta, finalArgs, result, nil)
+	safeRecordCall(mx.opts.metrics, server, toolName, dur, nil)
 	return result, nil
 }
 
