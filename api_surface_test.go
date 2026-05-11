@@ -20,15 +20,18 @@ import (
 // cacheStub satisfies the Cache interface for API surface pinning.
 type cacheStub struct{}
 
-func (*cacheStub) Get(_ context.Context, _ string) (*mcpx.CallResult, bool)              { return nil, false }
+func (*cacheStub) Get(_ context.Context, _ string) (*mcpx.CallResult, bool)             { return nil, false }
 func (*cacheStub) Set(_ context.Context, _ string, _ *mcpx.CallResult, _ time.Duration) {}
 
 // Anchor references for symbol coverage; values are not invoked.
 var (
-	_ mcpx.ArgsTransformer     = mcpx.ArgsTransformer("custom")
-	_ mcpx.TransportType       = mcpx.TransportHTTP
-	_ mcpx.BeforeCallHook      = func(_ context.Context, _, _ string, _ mcpx.ToolInfo, _ json.RawMessage) (context.Context, *mcpx.CallResult, error) { return nil, nil, nil }
-	_ mcpx.AfterCallHook       = func(_ context.Context, _, _ string, _ mcpx.ToolInfo, _ json.RawMessage, _ *mcpx.CallResult, _ error, _ time.Duration) {}
+	_ mcpx.ArgsTransformer = mcpx.ArgsTransformer("custom")
+	_ mcpx.TransportType   = mcpx.TransportHTTP
+	_ mcpx.BeforeCallHook  = func(_ context.Context, _, _ string, _ mcpx.ToolInfo, _ json.RawMessage) (context.Context, *mcpx.CallResult, error) {
+		return nil, nil, nil
+	}
+	_ mcpx.AfterCallHook = func(_ context.Context, _, _ string, _ mcpx.ToolInfo, _ json.RawMessage, _ *mcpx.CallResult, _ error, _ time.Duration) {
+	}
 	_ mcpx.ResultTransformHook = func(_ context.Context, _, _ string, _ mcpx.ToolInfo, _ *mcpx.CallResult) error { return nil }
 	_ mcpx.MetaEnricher        = func(_ context.Context, _ string, info mcpx.ToolInfo) mcpx.ToolInfo { return info }
 	_ mcpx.CustomTransformer   = func(args map[string]any) map[string]any { return args }

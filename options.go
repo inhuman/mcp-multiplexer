@@ -34,11 +34,11 @@ type options struct {
 	schemaValidation    bool
 
 	// cache
-	cache        Cache        // nil = built-in LRU; set by WithCache or disabled by WithoutCache
-	cacheDisabled bool        // true when WithoutCache() was called
-	cacheTTL     time.Duration
-	cacheSize    int
-	cacheKey     KeyFunc      // nil = defaultCacheKey
+	cache         Cache // nil = built-in LRU; set by WithCache or disabled by WithoutCache
+	cacheDisabled bool  // true when WithoutCache() was called
+	cacheTTL      time.Duration
+	cacheSize     int
+	cacheKey      KeyFunc // nil = defaultCacheKey
 
 	// callbacks
 	onRejectedCall OnRejectedCallFunc

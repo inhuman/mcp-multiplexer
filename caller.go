@@ -280,4 +280,3 @@ func buildResult(r *mcp.CallToolResult) *CallResult {
 		IsError: r.IsError,
 	}
 }
-
