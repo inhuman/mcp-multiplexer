@@ -21,6 +21,12 @@
 // github.com/inhuman/mcp-multiplexer/auth ships ready-made helpers for
 // the two most common shapes (Bearer, custom header).
 //
+// An opt-in health-check supervisor (WithHealthCheck) pings each server on a
+// configurable interval and reconnects with exponential backoff when a server
+// becomes unreachable. The per-server liveness state is queryable via
+// ServerStatus; CallTool short-circuits with ErrServerDown when a server is
+// marked down, avoiding unnecessary timeouts.
+//
 // The library is logger-agnostic via the Logger interface (4 methods).
 // Adapters for go.uber.org/zap and log/slog are provided as separate
 // packages under log/zaplog and log/sloglog so the core stays

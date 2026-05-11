@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`WithHealthCheck(interval time.Duration) Option`** — opt-in liveness supervisor.
+  Probes each server on the given interval via `ListTools`; reconnects with
+  exponential backoff (1 s → 2 s → … → 60 s cap) when a server is unreachable.
+  interval must be positive; zero or negative values cause `New` to return an error.
+- **`WithOnReconnect(fn OnReconnectFunc) Option`** — registers a callback invoked
+  on every reconnect attempt. `err` is nil on success, non-nil on failure.
+- **`type ServerState string`** with constants `ServerStateConnected` / `ServerStateDown`.
+- **`var ErrServerDown`** — returned by `CallTool` when the target server is in the
+  `down` state. Detectable via `errors.Is`.
+- **`(*Multiplexer).ServerStatus() map[string]ServerState`** — snapshot of per-server
+  liveness. When health-check is disabled, always returns `ServerStateConnected`.
+- **Fast-fail in `CallTool`**: when a server is `down`, returns `ErrServerDown`
+  immediately without waiting for the call timeout.
+
+All changes are purely additive; no existing API is modified.
+
 All notable changes to `github.com/inhuman/mcp-multiplexer`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning per
 project [constitution](./.specify/memory/constitution.md) (pre-1.0: breaking

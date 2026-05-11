@@ -29,6 +29,7 @@ func NewFromSessions(ctx context.Context, sessions map[string]*mcp.ClientSession
 			config:  ServerConfig{Name: name},
 			session: sess,
 			tools:   tools,
+			state:   ServerStateConnected,
 		}
 	}
 	return mx
