@@ -101,3 +101,14 @@ func TestAPISurface_WithSchemaValidation(t *testing.T) {
 	opt := mcpx.WithSchemaValidation()
 	require.NotNil(t, opt)
 }
+
+func TestAPISurface_CacheOptions(t *testing.T) {
+	ctx := t.Context()
+	ctx = mcpx.WithCacheScope(ctx, "tenant-1")
+	require.Equal(t, "tenant-1", mcpx.CacheScope(ctx))
+
+	opt1 := mcpx.WithCache(&cacheStub{})
+	opt2 := mcpx.WithCacheKey(func(_ context.Context, _, _ string, _ json.RawMessage) string { return "k" })
+	require.NotNil(t, opt1)
+	require.NotNil(t, opt2)
+}
