@@ -81,3 +81,8 @@ func TestAPISurface_WithOnToolsChanged(t *testing.T) {
 	opt := mcpx.WithOnToolsChanged(func(_ string, _, _ []mcpx.ToolInfo) {})
 	require.NotNil(t, opt)
 }
+
+func TestAPISurface_WithSchemaValidation(t *testing.T) {
+	opt := mcpx.WithSchemaValidation()
+	require.NotNil(t, opt)
+}

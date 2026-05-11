@@ -1,6 +1,7 @@
 package mcpx
 
 import (
+	"encoding/json"
 	"sort"
 	"testing"
 
@@ -65,5 +66,53 @@ func TestFindInvalidArgs(t *testing.T) {
 	t.Run("whitespace_only_string_invalid", func(t *testing.T) {
 		bad := findInvalidArgs(map[string]any{"x": "   "})
 		require.Equal(t, []string{"x"}, bad)
+	})
+}
+
+func TestValidateSchema_EmptySchema_Skips(t *testing.T) {
+	errs := validateSchema(nil, json.RawMessage(`{"anything":"goes"}`))
+	require.Empty(t, errs)
+}
+
+func TestValidateSchema_ValidArgs(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`)
+	errs := validateSchema(schema, json.RawMessage(`{"name":"alice"}`))
+	require.Empty(t, errs)
+}
+
+func TestValidateSchema_MissingRequired(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","required":["name"]}`)
+	errs := validateSchema(schema, json.RawMessage(`{}`))
+	require.NotEmpty(t, errs)
+	require.Contains(t, errs[0], "name")
+}
+
+func TestValidateSchema_WrongType(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"count":{"type":"integer"}}}`)
+	errs := validateSchema(schema, json.RawMessage(`{"count":"not-a-number"}`))
+	require.NotEmpty(t, errs)
+}
+
+func TestValidateSchema_EmptyArgs_ChecksRequired(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","required":["name"]}`)
+	errs := validateSchema(schema, nil)
+	require.NotEmpty(t, errs)
+}
+
+func TestValidateSchema_EmptyArgs_NoRequired_Valid(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	errs := validateSchema(schema, nil)
+	require.Empty(t, errs)
+}
+
+func TestValidateSchema_AdditionalConstraints(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"age":{"type":"integer","minimum":0,"maximum":150}}}`)
+	t.Run("valid", func(t *testing.T) {
+		errs := validateSchema(schema, json.RawMessage(`{"age":25}`))
+		require.Empty(t, errs)
+	})
+	t.Run("below_minimum", func(t *testing.T) {
+		errs := validateSchema(schema, json.RawMessage(`{"age":-1}`))
+		require.NotEmpty(t, errs)
 	})
 }

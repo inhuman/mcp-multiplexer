@@ -26,6 +26,7 @@ type options struct {
 	healthCheckSet      bool          // true when WithHealthCheck was called
 	onReconnect         OnReconnectFunc
 	onToolsChanged      OnToolsChangedFunc
+	schemaValidation    bool
 }
 
 func defaultOptions() *options {
@@ -206,4 +207,12 @@ func WithClientIdentity(name, version string) Option {
 			o.clientVersion = version
 		}
 	}
+}
+
+// WithSchemaValidation enables JSON Schema validation of tool arguments
+// against each tool's InputSchema before the call is dispatched. When a
+// tool declares no InputSchema the check is skipped. Violations are returned
+// as *ErrInvalidArgs with SchemaErrors populated.
+func WithSchemaValidation() Option {
+	return func(o *options) { o.schemaValidation = true }
 }
