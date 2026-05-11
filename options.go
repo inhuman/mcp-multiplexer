@@ -1,6 +1,9 @@
 package mcpx
 
-import "time"
+import (
+	"runtime/debug"
+	"time"
+)
 
 // Option configures a Multiplexer at construction time.
 type Option func(*options)
@@ -13,6 +16,7 @@ type options struct {
 	metaEnrichers       []MetaEnricher
 	customTransformers  map[string]CustomTransformer
 	authFunc            AuthFunc
+	metrics             Metrics
 	callTimeout         time.Duration
 	httpRetryMax        int
 	clientName          string
@@ -27,11 +31,24 @@ func defaultOptions() *options {
 	return &options{
 		logger:             NopLogger(),
 		customTransformers: make(map[string]CustomTransformer),
+		metrics:            nopMetrics{},
 		callTimeout:        30 * time.Second,
 		httpRetryMax:       5,
 		clientName:         "mcpx",
-		clientVersion:      "0.1.0",
+		clientVersion:      defaultClientVersion(),
 	}
+}
+
+// defaultClientVersion reads the consuming module's version from build info.
+// Falls back to "dev" when build info is unavailable or the version is the
+// Go sentinel "(devel)" (produced by go run and untagged builds).
+func defaultClientVersion() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return "dev"
 }
 
 // WithLogger attaches a Logger. Default: NopLogger.
@@ -145,6 +162,18 @@ type OnToolsChangedFunc func(server string, before, after []ToolInfo)
 // clears any previously registered callback.
 func WithOnToolsChanged(fn OnToolsChangedFunc) Option {
 	return func(o *options) { o.onToolsChanged = fn }
+}
+
+// WithMetrics registers a [Metrics] implementation that receives call-level
+// and tool-list events. Passing nil is a no-op (leaves the default no-op
+// implementation in place). Calling WithMetrics more than once overwrites
+// the previous value.
+func WithMetrics(m Metrics) Option {
+	return func(o *options) {
+		if m != nil {
+			o.metrics = m
+		}
+	}
 }
 
 // WithClientIdentity overrides the MCP client name/version sent during

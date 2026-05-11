@@ -352,5 +352,6 @@ func (mx *Multiplexer) fetchTools(ctx context.Context, serverName string, sessio
 		}
 		infos = append(infos, info)
 	}
+	safeRecordToolList(mx.opts.metrics, serverName, len(infos))
 	return infos, nil
 }
