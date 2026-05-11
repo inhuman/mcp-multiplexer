@@ -51,9 +51,9 @@ func TestHealthCheck_SupervisorReconnects(t *testing.T) {
 	defer srv.Stop()
 
 	var (
-		mu             sync.Mutex
+		mu              sync.Mutex
 		reconnectErrors []error
-		callCount      atomic.Int64
+		callCount       atomic.Int64
 	)
 
 	mx, err := mcpx.New(ctx, mcpx.MultiplexerConfig{
