@@ -4,6 +4,10 @@
 
 ### Added
 
+- **`ServerConfig.CallTimeout time.Duration`** — per-server call timeout override.
+  A zero or negative value inherits the multiplexer-wide default set via
+  `WithCallTimeout` (default 30 s). Use a shorter value for local stdio servers
+  and a longer value for HTTP servers that may need retries.
 - **`WithHealthCheck(interval time.Duration) Option`** — opt-in liveness supervisor.
   Probes each server on the given interval via `ListTools`; reconnects with
   exponential backoff (1 s → 2 s → … → 60 s cap) when a server is unreachable.

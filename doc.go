@@ -33,6 +33,9 @@
 // permission changes). An optional WithOnToolsChanged callback notifies the
 // consumer after each refresh that produces a different tool list.
 //
+// Per-server call timeouts are supported via ServerConfig.CallTimeout; a zero
+// value inherits the global default set via WithCallTimeout (30 s by default).
+//
 // The library is logger-agnostic via the Logger interface (4 methods).
 // Adapters for go.uber.org/zap and log/slog are provided as separate
 // packages under log/zaplog and log/sloglog so the core stays

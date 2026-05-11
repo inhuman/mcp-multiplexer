@@ -1,6 +1,9 @@
 package mcpx
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // MultiplexerConfig is the top-level config for New().
 type MultiplexerConfig struct {
@@ -44,6 +47,14 @@ type ServerConfig struct {
 
 	// HTTP/SSE only.
 	URL string `json:"url,omitempty"`
+
+	// CallTimeout is the maximum duration allowed for a single tool call to
+	// this server. A zero or negative value inherits the multiplexer-wide
+	// default set via [WithCallTimeout] (default 30 s).
+	//
+	// Use a shorter value for local stdio servers and a longer value for HTTP
+	// servers that may need retries.
+	CallTimeout time.Duration `json:"call_timeout,omitempty"`
 
 	// Auth is an opaque parameter block read verbatim from the JSON "auth"
 	// field. The library does not interpret its shape — it is forwarded
