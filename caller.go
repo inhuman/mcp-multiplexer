@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -99,14 +100,15 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 		}
 	}
 
-	callCtx, cancel := context.WithTimeout(ctx, mx.opts.callTimeout)
+	timeout := effectiveTimeout(entry.config.CallTimeout, mx.opts.callTimeout)
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	rawResult, callErr := entrySess.CallTool(callCtx, params)
 	if callErr != nil {
 		var wrapped error
 		if callCtx.Err() != nil && errors.Is(callCtx.Err(), context.DeadlineExceeded) {
-			wrapped = fmt.Errorf("mcpx: call timeout %s/%s after %s", server, toolName, mx.opts.callTimeout)
+			wrapped = fmt.Errorf("mcpx: call timeout %s/%s after %s", server, toolName, timeout)
 		} else {
 			wrapped = fmt.Errorf("mcpx: server %s: %w", server, callErr)
 		}
@@ -135,6 +137,14 @@ func (mx *Multiplexer) runAfterCall(ctx context.Context, server string, tool Too
 	for _, hook := range mx.opts.afterCall {
 		hook(ctx, server, tool, args, result, callErr)
 	}
+}
+
+// effectiveTimeout returns perServer if positive, otherwise global.
+func effectiveTimeout(perServer, global time.Duration) time.Duration {
+	if perServer > 0 {
+		return perServer
+	}
+	return global
 }
 
 func buildResult(r *mcp.CallToolResult) *CallResult {
