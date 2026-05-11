@@ -48,6 +48,16 @@
 // packages under log/zaplog and log/sloglog so the core stays
 // dependency-light.
 //
+// The "singularResourceType" transformer accepts a configurable plural→singular
+// map: extend or override the built-in Kubernetes map globally via
+// WithResourceSingular, or per-server via ServerConfig.ResourceSingular
+// (per-server entries win over global, which in turn wins over built-in).
+//
+// Runnable examples demonstrating common patterns live in the examples/
+// directory: examples/basic (multi-server setup), examples/policy
+// (BeforeCallHook gate), and examples/redact (ResultTransformHook PII
+// redaction).
+//
 // See README.md for usage examples and the project constitution for
 // design principles (zero-dependency core, real-dependency testing,
 // secure defaults).

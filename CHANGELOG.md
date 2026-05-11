@@ -4,6 +4,21 @@
 
 ### Added
 
+- **Configurable resource singularizer** — the `"singularResourceType"` argument
+  transformer now accepts a custom plural→singular map in addition to the built-in
+  Kubernetes map. Resolution order: per-server (`ServerConfig.ResourceSingular`) →
+  global custom (`WithResourceSingular`) → built-in. Passing `nil` or an empty map
+  to `WithResourceSingular` is a no-op; multiple calls accumulate entries.
+  - `WithResourceSingular(m map[string]string) Option` — merges `m` into the global
+    custom map used by every server.
+  - `ServerConfig.ResourceSingular map[string]string` (`json:"resource_singular,omitempty"`)
+    — per-server override; wins over `WithResourceSingular` and the built-in map.
+- **Examples directory** — three compilable `package main` programs under `examples/`:
+  - `examples/basic` — connecting to stdio + HTTP servers and calling a tool.
+  - `examples/policy` — `BeforeCallHook` gate blocking tools with `Destructive == true`.
+  - `examples/redact` — `ResultTransformHook` replacing SSN patterns with `[REDACTED]`.
+  Each example compiles with `go build ./examples/...` and uses only the root `go.mod`.
+
 - **`Metrics` interface** — `RecordCall(server, tool string, dur time.Duration, err error)` and
   `RecordToolList(server string, count int)`. Register an implementation via `WithMetrics(m Metrics)`.
   Passing `nil` is a no-op. Panics inside any method are recovered by the library. Both

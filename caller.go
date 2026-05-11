@@ -85,7 +85,8 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 		if bad := findInvalidArgs(rawArgs); len(bad) > 0 {
 			return nil, &ErrInvalidArgs{BadFields: bad}
 		}
-		transformed := entry.config.ArgsTransformers.applyAll(rawArgs, mx.opts.customTransformers)
+		singularMap := mergedSingularMap(mx.opts.resourceSingular, entry.config.ResourceSingular)
+		transformed := entry.config.ArgsTransformers.applyAll(rawArgs, mx.opts.customTransformers, singularMap)
 		transformed = applyFieldMap(transformed, entry.config.FieldMap)
 		params.Arguments = transformed
 

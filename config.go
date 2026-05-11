@@ -76,6 +76,11 @@ type ServerConfig struct {
 	ArgsTransformers ArgsTransformers `json:"args_transformer,omitempty"`
 	// FieldMap renames argument keys (top-level only) before sending.
 	FieldMap map[string]string `json:"field_map,omitempty"`
+	// ResourceSingular is an optional per-server override map for the
+	// "singularResourceType" transformer. Entries here win over both the
+	// global custom map (WithResourceSingular) and the built-in map.
+	// A nil value means no per-server override.
+	ResourceSingular map[string]string `json:"resource_singular,omitempty"`
 }
 
 func (c ServerConfig) withKindDefaults(ks KindSettings) ServerConfig {
