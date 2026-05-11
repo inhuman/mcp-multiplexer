@@ -18,6 +18,23 @@
   - `examples/policy` — `BeforeCallHook` gate blocking tools with `Destructive == true`.
   - `examples/redact` — `ResultTransformHook` replacing SSN patterns with `[REDACTED]`.
   Each example compiles with `go build ./examples/...` and uses only the root `go.mod`.
+- **`policy` subpackage** — ready-made `BeforeCallHook` and `AfterCallHook` builders
+  (`github.com/inhuman/mcp-multiplexer/policy`). Ships as a separate import; the core
+  stays policy-free.
+  - `policy.DenyDestructive()` — blocks any tool with `ToolInfo.Destructive == true`.
+  - `policy.RequireRoles(roles ...string)` — allows only callers whose context carries
+    one of the required roles under `policy.RolesKey`.
+  - `policy.RateLimit(per time.Duration, burst int)` — per-(server, tool) token-bucket
+    limiter using only stdlib; no external dependencies.
+  - `policy.AuditLog(logger mcpx.Logger)` — `AfterCallHook` that logs every call
+    outcome (success → Info, error → Error) without blocking the call.
+- **`eino` subpackage** — Cloudwego/eino framework adapter
+  (`github.com/inhuman/mcp-multiplexer/eino`). Ships with its own `go.mod` so
+  cloudwego/eino is not pulled into the core dependency graph.
+  - `eino.Tools(mx)` — returns one `tool.InvokableTool` per MCP tool across all servers.
+  - `eino.ToolsForServer(mx, server)` — returns tools for a specific server only.
+  - Each tool's `Info()` maps `mcpx.ToolInfo` → `*schema.ToolInfo` including the input
+    JSON schema. `InvokableRun` delegates to `mx.CallTool`.
 
 - **`Metrics` interface** — `RecordCall(server, tool string, dur time.Duration, err error)` and
   `RecordToolList(server string, count int)`. Register an implementation via `WithMetrics(m Metrics)`.
