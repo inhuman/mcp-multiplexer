@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/require"
 
 	mcpx "github.com/inhuman/mcp-multiplexer"
@@ -412,4 +413,124 @@ func withMultiplexerCustom(t *testing.T, opts ...mcptest.Option) (callFn func() 
 		return err
 	}
 	return callFn, cleanup, nil, addAfter
+}
+
+// singleWithSchemaAndMxOpts builds a multiplexer with a single server, the
+// given tool schema, and additional multiplexer options.
+func singleWithSchemaAndMxOpts(t *testing.T, schema *jsonschema.Schema, mxOpts ...mcpx.Option) (*mcpx.Multiplexer, func()) {
+	t.Helper()
+	srv := mcptest.NewServer(
+		mcptest.WithTool(mcptest.ToolSpec{
+			Name: "tool",
+			Handler: func(_ context.Context, args map[string]any) (string, error) {
+				if v, ok := args["name"]; ok {
+					return fmt.Sprint(v), nil
+				}
+				return "ok", nil
+			},
+			InputSchema: schema,
+		}),
+	)
+	ts := httptest.NewServer(srv.HTTPHandler())
+	allOpts := append([]mcpx.Option{mcpx.WithHTTPRetryMax(0)}, mxOpts...)
+	mx, err := mcpx.New(t.Context(), mcpx.MultiplexerConfig{
+		Servers: []mcpx.ServerConfig{{Name: "s", Transport: mcpx.TransportHTTP, URL: ts.URL}},
+	}, allOpts...)
+	require.NoError(t, err)
+	return mx, func() { mx.Close(); ts.Close(); srv.Close() }
+}
+
+func TestCallTool_SchemaValidation_ValidArgs(t *testing.T) {
+	schema := &jsonschema.Schema{
+		Type:     "object",
+		Required: []string{"name"},
+		Properties: map[string]*jsonschema.Schema{
+			"name": {Type: "string"},
+		},
+	}
+	mx, cleanup := singleWithSchemaAndMxOpts(t, schema, mcpx.WithSchemaValidation())
+	defer cleanup()
+
+	res, err := mx.CallTool(t.Context(), "s", "tool", []byte(`{"name":"alice"}`))
+	require.NoError(t, err)
+	require.Equal(t, "alice", res.Text)
+}
+
+func TestCallTool_SchemaValidation_MissingRequired(t *testing.T) {
+	schema := &jsonschema.Schema{
+		Type:     "object",
+		Required: []string{"name"},
+		Properties: map[string]*jsonschema.Schema{
+			"name": {Type: "string"},
+		},
+	}
+	mx, cleanup := singleWithSchemaAndMxOpts(t, schema, mcpx.WithSchemaValidation())
+	defer cleanup()
+
+	_, err := mx.CallTool(t.Context(), "s", "tool", []byte(`{}`))
+	require.Error(t, err)
+	var ivErr *mcpx.ErrInvalidArgs
+	require.True(t, errors.As(err, &ivErr))
+	require.NotEmpty(t, ivErr.SchemaErrors)
+	require.Contains(t, err.Error(), "schema violations")
+}
+
+func TestCallTool_SchemaValidation_WrongType(t *testing.T) {
+	schema := &jsonschema.Schema{
+		Type: "object",
+		Properties: map[string]*jsonschema.Schema{
+			"count": {Type: "integer"},
+		},
+	}
+	mx, cleanup := singleWithSchemaAndMxOpts(t, schema, mcpx.WithSchemaValidation())
+	defer cleanup()
+
+	_, err := mx.CallTool(t.Context(), "s", "tool", []byte(`{"count":"not-a-number"}`))
+	require.Error(t, err)
+	var ivErr *mcpx.ErrInvalidArgs
+	require.True(t, errors.As(err, &ivErr))
+	require.NotEmpty(t, ivErr.SchemaErrors)
+}
+
+func TestCallTool_SchemaValidation_EmptyArgs_RequiredField(t *testing.T) {
+	schema := &jsonschema.Schema{
+		Type:     "object",
+		Required: []string{"name"},
+	}
+	mx, cleanup := singleWithSchemaAndMxOpts(t, schema, mcpx.WithSchemaValidation())
+	defer cleanup()
+
+	_, err := mx.CallTool(t.Context(), "s", "tool", nil)
+	require.Error(t, err)
+	var ivErr *mcpx.ErrInvalidArgs
+	require.True(t, errors.As(err, &ivErr))
+	require.NotEmpty(t, ivErr.SchemaErrors)
+}
+
+func TestCallTool_SchemaValidation_Disabled_ByDefault(t *testing.T) {
+	schema := &jsonschema.Schema{
+		Type:     "object",
+		Required: []string{"name"},
+	}
+	mx, cleanup := singleWithSchemaAndMxOpts(t, schema)
+	defer cleanup()
+
+	_, err := mx.CallTool(t.Context(), "s", "tool", []byte(`{}`))
+	require.NoError(t, err)
+}
+
+func TestCallTool_SchemaValidation_NoSchema_Skips(t *testing.T) {
+	srv := mcptest.NewServer(echoTool("tool"))
+	ts := httptest.NewServer(srv.HTTPHandler())
+	defer ts.Close()
+	defer srv.Close()
+
+	mx, err := mcpx.New(t.Context(), mcpx.MultiplexerConfig{
+		Servers: []mcpx.ServerConfig{{Name: "s", Transport: mcpx.TransportHTTP, URL: ts.URL}},
+	}, mcpx.WithHTTPRetryMax(0), mcpx.WithSchemaValidation())
+	require.NoError(t, err)
+	defer mx.Close()
+
+	_, err = mx.CallTool(t.Context(), "s", "tool", []byte(`{"msg":"hi"}`))
+	require.NoError(t, err)
 }

@@ -17,15 +17,25 @@ var ErrServerNotFound = errors.New("mcpx: server not found")
 // ErrToolNotFound is returned by CallTool when the named tool is not exposed by the server.
 var ErrToolNotFound = errors.New("mcpx: tool not found")
 
-// ErrInvalidArgs is returned by CallTool when arguments contain unresolved
-// placeholder values (empty strings, "undefined", "null", etc.).
+// ErrInvalidArgs is returned by CallTool when arguments fail validation.
+// BadFields lists argument paths that contain unresolved placeholder values.
+// SchemaErrors lists JSON Schema violations; populated only when
+// [WithSchemaValidation] is enabled and args do not conform to the tool schema.
 type ErrInvalidArgs struct {
-	BadFields []string
+	BadFields    []string
+	SchemaErrors []string
 }
 
 func (e *ErrInvalidArgs) Error() string {
-	return fmt.Sprintf("mcpx: argument(s) have invalid placeholder values: %s",
-		strings.Join(e.BadFields, ", "))
+	if len(e.SchemaErrors) == 0 {
+		return "mcpx: argument(s) have invalid placeholder values: " + strings.Join(e.BadFields, ", ")
+	}
+	parts := make([]string, 0, 2)
+	if len(e.BadFields) > 0 {
+		parts = append(parts, "placeholder values: "+strings.Join(e.BadFields, ", "))
+	}
+	parts = append(parts, "schema violations: "+strings.Join(e.SchemaErrors, "; "))
+	return "mcpx: invalid arguments: " + strings.Join(parts, "; ")
 }
 
 // CallTool invokes the named tool on the named server with the given JSON
@@ -34,7 +44,7 @@ func (e *ErrInvalidArgs) Error() string {
 //
 // Errors returned:
 //   - ErrServerNotFound, ErrToolNotFound — caller mistake.
-//   - *ErrInvalidArgs — args contain unresolved placeholders.
+//   - *ErrInvalidArgs — args contain unresolved placeholders or schema violations.
 //   - errors from BeforeCallHook are propagated as-is.
 //   - upstream MCP errors are wrapped via fmt.Errorf("server %s: %w", ...).
 func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, argsJSON json.RawMessage) (*CallResult, error) {
@@ -96,6 +106,14 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 		}
 		mx.opts.logger.Debug("mcpx: call",
 			F("server", server), F("tool", toolName), F("args", transformed))
+	}
+
+	if mx.opts.schemaValidation {
+		if errs := validateSchema(toolMeta.InputSchema, finalArgs); len(errs) > 0 {
+			ivErr := &ErrInvalidArgs{SchemaErrors: errs}
+			safeRecordCall(mx.opts.metrics, server, toolName, time.Since(start), ivErr)
+			return nil, ivErr
+		}
 	}
 
 	for _, hook := range mx.opts.beforeCall {
