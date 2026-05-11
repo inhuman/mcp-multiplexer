@@ -1,6 +1,9 @@
 package mcpx
 
-import "strings"
+import (
+	"maps"
+	"strings"
+)
 
 // ArgsTransformer names a transformation applied to tool arguments before
 // sending. Built-in values:
@@ -25,21 +28,21 @@ const (
 type ArgsTransformers []ArgsTransformer
 
 // applyArgsTransformers runs all transformers (built-in and custom) in order.
-func (ts ArgsTransformers) applyAll(args map[string]any, custom map[string]CustomTransformer) map[string]any {
+func (ts ArgsTransformers) applyAll(args map[string]any, custom map[string]CustomTransformer, singularMap map[string]string) map[string]any {
 	for _, t := range ts {
-		args = applyArgsTransformer(t, args, custom)
+		args = applyArgsTransformer(t, args, custom, singularMap)
 	}
 	return args
 }
 
-func applyArgsTransformer(t ArgsTransformer, args map[string]any, custom map[string]CustomTransformer) map[string]any {
+func applyArgsTransformer(t ArgsTransformer, args map[string]any, custom map[string]CustomTransformer, singularMap map[string]string) map[string]any {
 	switch t {
 	case ArgsTransformerCamelCase:
 		return snakeToCamelKeys(args)
 	case ArgsTransformerJoinArrays:
 		return joinStringArrays(args)
 	case ArgsTransformerSingularResource:
-		return singularizeResourceType(args)
+		return singularizeResourceType(args, singularMap)
 	}
 	if custom != nil {
 		if fn, ok := custom[string(t)]; ok && fn != nil {
@@ -47,6 +50,15 @@ func applyArgsTransformer(t ArgsTransformer, args map[string]any, custom map[str
 		}
 	}
 	return args
+}
+
+// mergedSingularMap builds the effective plural→singular lookup by layering:
+// built-in → globalCustom → perServer (last write wins).
+func mergedSingularMap(globalCustom, perServer map[string]string) map[string]string {
+	m := maps.Clone(k8sResourceSingular)
+	maps.Copy(m, globalCustom)
+	maps.Copy(m, perServer)
+	return m
 }
 
 // k8sResourceSingular maps common plural/alias forms to canonical singular.
@@ -77,7 +89,7 @@ func DefaultResourceSingular() map[string]string {
 	return out
 }
 
-func singularizeResourceType(args map[string]any) map[string]any {
+func singularizeResourceType(args map[string]any, singular map[string]string) map[string]any {
 	v, ok := args["resourceType"]
 	if !ok {
 		return args
@@ -86,7 +98,7 @@ func singularizeResourceType(args map[string]any) map[string]any {
 	if !ok {
 		return args
 	}
-	singular, ok := k8sResourceSingular[strings.ToLower(s)]
+	singularVal, ok := singular[strings.ToLower(s)]
 	if !ok {
 		return args
 	}
@@ -94,7 +106,7 @@ func singularizeResourceType(args map[string]any) map[string]any {
 	for k, v := range args {
 		out[k] = v
 	}
-	out["resourceType"] = singular
+	out["resourceType"] = singularVal
 	return out
 }
 

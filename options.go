@@ -15,6 +15,7 @@ type options struct {
 	resultTransform     []ResultTransformHook
 	metaEnrichers       []MetaEnricher
 	customTransformers  map[string]CustomTransformer
+	resourceSingular    map[string]string
 	authFunc            AuthFunc
 	metrics             Metrics
 	callTimeout         time.Duration
@@ -172,6 +173,24 @@ func WithMetrics(m Metrics) Option {
 	return func(o *options) {
 		if m != nil {
 			o.metrics = m
+		}
+	}
+}
+
+// WithResourceSingular merges m into the global custom singular map used by
+// the "singularResourceType" argument transformer. Entries in m override
+// built-in entries with the same key. Passing nil or an empty map is a no-op.
+// Call multiple times to accumulate entries (each call merges, not replaces).
+func WithResourceSingular(m map[string]string) Option {
+	return func(o *options) {
+		if len(m) == 0 {
+			return
+		}
+		if o.resourceSingular == nil {
+			o.resourceSingular = make(map[string]string, len(m))
+		}
+		for k, v := range m {
+			o.resourceSingular[k] = v
 		}
 	}
 }

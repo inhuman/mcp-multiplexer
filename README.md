@@ -1,6 +1,10 @@
 # mcp-multiplexer
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/inhuman/mcp-multiplexer.svg)](https://pkg.go.dev/github.com/inhuman/mcp-multiplexer)
+[![CI](https://github.com/inhuman/mcp-multiplexer/actions/workflows/ci.yml/badge.svg)](https://github.com/inhuman/mcp-multiplexer/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/inhuman/mcp-multiplexer)](https://goreportcard.com/report/github.com/inhuman/mcp-multiplexer)
+[![Latest Release](https://img.shields.io/github/v/release/inhuman/mcp-multiplexer)](https://github.com/inhuman/mcp-multiplexer/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 MCP multiplexer for Go — connect to many [Model Context Protocol](https://modelcontextprotocol.io/) servers at once, expose one tool list per server kind, and normalize tool arguments across them.
 
