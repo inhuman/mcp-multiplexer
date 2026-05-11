@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [v0.3.0] — 2026-05-12
 
 ### Added
 
@@ -35,7 +35,6 @@
   - `eino.ToolsForServer(mx, server)` — returns tools for a specific server only.
   - Each tool's `Info()` maps `mcpx.ToolInfo` → `*schema.ToolInfo` including the input
     JSON schema. `InvokableRun` delegates to `mx.CallTool`.
-
 - **`Metrics` interface** — `RecordCall(server, tool string, dur time.Duration, err error)` and
   `RecordToolList(server string, count int)`. Register an implementation via `WithMetrics(m Metrics)`.
   Passing `nil` is a no-op. Panics inside any method are recovered by the library. Both
