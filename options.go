@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+const (
+	defaultCacheTTL  = 30 * time.Second
+	defaultCacheSize = 256
+)
+
 // Option configures a Multiplexer at construction time.
 type Option func(*options)
 
@@ -27,6 +32,17 @@ type options struct {
 	onReconnect         OnReconnectFunc
 	onToolsChanged      OnToolsChangedFunc
 	schemaValidation    bool
+
+	// cache
+	cache         Cache // nil = built-in LRU; set by WithCache or disabled by WithoutCache
+	cacheDisabled bool  // true when WithoutCache() was called
+	cacheTTL      time.Duration
+	cacheSize     int
+	cacheKey      KeyFunc // nil = defaultCacheKey
+
+	// callbacks
+	onRejectedCall OnRejectedCallFunc
+	onConnect      OnConnectFunc
 }
 
 func defaultOptions() *options {
@@ -38,6 +54,8 @@ func defaultOptions() *options {
 		httpRetryMax:       5,
 		clientName:         "mcpx",
 		clientVersion:      defaultClientVersion(),
+		cacheTTL:           defaultCacheTTL,
+		cacheSize:          defaultCacheSize,
 	}
 }
 
@@ -215,4 +233,64 @@ func WithClientIdentity(name, version string) Option {
 // as *ErrInvalidArgs with SchemaErrors populated.
 func WithSchemaValidation() Option {
 	return func(o *options) { o.schemaValidation = true }
+}
+
+// WithCache replaces the built-in LRU with the given Cache implementation.
+// Passing nil keeps the built-in LRU. WithCache and WithoutCache are mutually
+// exclusive — last one registered wins.
+func WithCache(c Cache) Option {
+	return func(o *options) {
+		if c != nil {
+			o.cache = c
+			o.cacheDisabled = false
+		}
+	}
+}
+
+// WithCacheTTL sets the default TTL for cached results. Default: 30s.
+// Per-tool overrides can be set via ToolInfo.Custom["cache_ttl"].
+func WithCacheTTL(d time.Duration) Option {
+	return func(o *options) {
+		if d > 0 {
+			o.cacheTTL = d
+		}
+	}
+}
+
+// WithCacheSize sets the maximum number of entries in the built-in LRU.
+// Default: 256. Ignored when WithCache is used.
+func WithCacheSize(n int) Option {
+	return func(o *options) {
+		if n > 0 {
+			o.cacheSize = n
+		}
+	}
+}
+
+// WithoutCache disables the response cache entirely. Takes priority over
+// WithCache if called after it.
+func WithoutCache() Option {
+	return func(o *options) {
+		o.cacheDisabled = true
+		o.cache = nil
+	}
+}
+
+// WithCacheKey replaces the built-in cache key function. The KeyFunc receives
+// the call context (with scope), server, tool, and canonicalised args.
+func WithCacheKey(fn KeyFunc) Option {
+	return func(o *options) { o.cacheKey = fn }
+}
+
+// WithOnRejectedCall registers an observer called when CallTool is rejected
+// before dispatching to upstream. It fires before AfterCall. Panics recovered.
+func WithOnRejectedCall(fn OnRejectedCallFunc) Option {
+	return func(o *options) { o.onRejectedCall = fn }
+}
+
+// WithOnConnect registers a callback invoked once per server after the
+// initial successful connection, before New returns. tools is the
+// post-MetaEnricher list. Panics recovered.
+func WithOnConnect(fn OnConnectFunc) Option {
+	return func(o *options) { o.onConnect = fn }
 }

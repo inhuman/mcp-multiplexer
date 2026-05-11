@@ -1,5 +1,87 @@
 # Changelog
 
+## [Unreleased] — v0.4.0
+
+### Breaking changes
+
+- **`BeforeCallHook`** signature changed: now returns `(context.Context, *CallResult, error)`.
+  - `(_, _, err)` where `err != nil` → abort (as before, but new return shape).
+  - `(_, result, nil)` where `result != nil` → short-circuit: upstream and ResultTransform are skipped; AfterCall still fires.
+  - `(newCtx, nil, nil)` → continue; `newCtx` replaces `ctx` for all subsequent hooks and downstream steps.
+  - Both `result` and `err` non-nil → error wins; result is discarded.
+- **`AfterCallHook`** gains a final `duration time.Duration` parameter (wall time from `CallTool` entry).
+  AfterCall now fires on **all** code paths: success, cache hit, short-circuit, upstream error, ResultTransform error, and all four rejection reasons.
+- **`ResultTransformHook`** now receives `*CallResult` and mutates it in place; it no longer returns `(string, error)`.
+  All parts (text and image) are accessible for sanitization.
+
+### Added
+
+- **Built-in response cache** — bounded LRU, enabled by default (256 entries, 30 s TTL).
+  - Cacheability: `ReadOnly && Idempotent` → cached; `Destructive` → never cached; `Custom["cacheable"]="true"` → opt-in override.
+  - `IsError` results and upstream errors are never cached.
+  - New options: `WithCache(Cache)`, `WithCacheTTL(time.Duration)`, `WithCacheSize(int)`, `WithoutCache()`, `WithCacheKey(KeyFunc)`.
+  - `Cache` interface (`Get`/`Set`) for plugging in Redis or any external store.
+  - `KeyFunc` type for replacing the built-in `scope|server|tool|canonicalJSON(args)` key.
+  - Context helpers: `WithCacheScope(ctx, scope)`, `CacheScope(ctx)`, `IsCacheHit(ctx)`.
+  - Per-tool TTL via `ToolInfo.Custom["cache_ttl"]` (parses `time.Duration` format).
+  - Warn-once (per Multiplexer lifetime) when a cacheable call has no scope set.
+- **`(*CallResult).Clone() *CallResult`** — exported deep-copy method; `Data` and `Raw` byte slices are independently allocated. Nil receiver returns nil.
+- **`RejectReason`** type and four constants: `RejectUnknownServer`, `RejectUnknownTool`, `RejectServerDown`, `RejectBeforeHookAbort`.
+- **`OnRejectedCallFunc`** + `WithOnRejectedCall` option — fires before AfterCall on every rejection path; panics recovered.
+- **`OnConnectFunc`** + `WithOnConnect` option — fires once per server after initial successful connect (before `New` returns); tools list is post-MetaEnricher; panics recovered.
+
+### Migrating from v0.3.x
+
+#### `BeforeCallHook`
+
+```go
+// v0.3.x
+func myHook(ctx context.Context, server string, tool mcpx.ToolInfo, args json.RawMessage) error {
+    if tool.Destructive { return errDenied }
+    return nil
+}
+
+// v0.4.0
+func myHook(ctx context.Context, server, tool string, info mcpx.ToolInfo, args json.RawMessage) (context.Context, *mcpx.CallResult, error) {
+    if info.Destructive { return nil, nil, errDenied }
+    return nil, nil, nil
+}
+```
+
+#### `AfterCallHook`
+
+```go
+// v0.3.x
+func myAfter(ctx context.Context, server string, tool mcpx.ToolInfo, args json.RawMessage, result *mcpx.CallResult, callErr error) { ... }
+
+// v0.4.0
+func myAfter(ctx context.Context, server, tool string, info mcpx.ToolInfo, args json.RawMessage, result *mcpx.CallResult, callErr error, duration time.Duration) { ... }
+```
+
+#### `ResultTransformHook`
+
+```go
+// v0.3.x
+func myTransform(ctx context.Context, server string, tool mcpx.ToolInfo, text string) (string, error) {
+    return strings.ReplaceAll(text, secret, "[REDACTED]"), nil
+}
+
+// v0.4.0
+func myTransform(ctx context.Context, server, tool string, info mcpx.ToolInfo, result *mcpx.CallResult) error {
+    result.Text = strings.ReplaceAll(result.Text, secret, "[REDACTED]")
+    for i, p := range result.Parts {
+        if p.Kind == mcpx.ContentText {
+            result.Parts[i].Text = strings.ReplaceAll(p.Text, secret, "[REDACTED]")
+        }
+    }
+    return nil
+}
+```
+
+**Note**: AfterCall now fires on previously-silent paths (rejected calls, short-circuits). Users with naive metric aggregations should expect higher AfterCall invocation counts. Filter by `callErr` type or `IsCacheHit(ctx)` to distinguish paths.
+
+---
+
 ## [v0.3.0] — 2026-05-12
 
 ### Added

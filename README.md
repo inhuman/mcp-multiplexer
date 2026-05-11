@@ -89,22 +89,36 @@ func main() {
 All hooks are optional. Register any number; they chain in registration order.
 
 ```go
-// Policy / RBAC — abort the call before it goes upstream.
-mcpx.WithBeforeCall(func(ctx context.Context, server string, tool mcpx.ToolInfo, args json.RawMessage) error {
-    if tool.Destructive && !isAdmin(ctx) {
-        return errors.New("destructive tools require admin")
+// Policy / RBAC — abort or short-circuit before going upstream.
+mcpx.WithBeforeCall(func(ctx context.Context, server, tool string, info mcpx.ToolInfo, args json.RawMessage) (context.Context, *mcpx.CallResult, error) {
+    if info.Destructive && !isAdmin(ctx) {
+        return nil, nil, errors.New("destructive tools require admin")
+    }
+    return nil, nil, nil
+}),
+
+// OTel span — inject span into context, close it in AfterCall.
+mcpx.WithBeforeCall(func(ctx context.Context, server, tool string, _ mcpx.ToolInfo, _ json.RawMessage) (context.Context, *mcpx.CallResult, error) {
+    span := tracer.Start(ctx, "mcp."+tool)
+    return span.Context(), nil, nil
+}),
+
+// Prompt-injection / drift detection — sanitize results (text and image parts).
+mcpx.WithResultTransform(func(ctx context.Context, server, tool string, info mcpx.ToolInfo, result *mcpx.CallResult) error {
+    result.Text = injection.Sanitize(result.Text)
+    for i, p := range result.Parts {
+        if p.Kind == mcpx.ContentText {
+            result.Parts[i].Text = injection.Sanitize(p.Text)
+        }
     }
     return nil
 }),
 
-// Prompt-injection / drift detection — sanitize results.
-mcpx.WithResultTransform(func(ctx context.Context, server string, tool mcpx.ToolInfo, text string) (string, error) {
-    return injection.Sanitize(ctx, text)
-}),
-
-// Metrics / events / cache — observe every call.
-mcpx.WithAfterCall(func(ctx context.Context, server string, tool mcpx.ToolInfo, args json.RawMessage, res *mcpx.CallResult, err error) {
-    metrics.RecordToolCall(server, tool.Name, err)
+// Metrics / events — observe every call with duration and cache status.
+mcpx.WithAfterCall(func(ctx context.Context, server, tool string, info mcpx.ToolInfo, args json.RawMessage, res *mcpx.CallResult, err error, dur time.Duration) {
+    source := "upstream"
+    if mcpx.IsCacheHit(ctx) { source = "cache" }
+    metrics.RecordToolCall(server, tool, err, dur, source)
 }),
 
 // Tag tools with custom metadata at fetch time.
@@ -115,6 +129,101 @@ mcpx.WithMetaEnricher(func(ctx context.Context, server string, info mcpx.ToolInf
     return info
 }),
 ```
+
+## Response caching
+
+The multiplexer includes a bounded in-process LRU cache enabled by default (256 entries, 30 s TTL). A tool is cached when `ReadOnly && Idempotent`, or when `Custom["cacheable"] = "true"`. `Destructive` tools are never cached.
+
+```go
+// Default cache — no extra options needed.
+mx, _ := mcpx.New(ctx, cfg)
+
+// Isolate cache entries per tenant to prevent cross-tenant leaks.
+tenantCtx := mcpx.WithCacheScope(ctx, userID)
+result, _ := mx.CallTool(tenantCtx, "k8s", "list_pods", nil)
+
+// Check cache hit in AfterCall.
+mcpx.WithAfterCall(func(ctx context.Context, ..., dur time.Duration) {
+    if mcpx.IsCacheHit(ctx) { /* served from cache */ }
+}),
+
+// Custom TTL for a specific tool via MetaEnricher.
+mcpx.WithMetaEnricher(func(ctx context.Context, server string, info mcpx.ToolInfo) mcpx.ToolInfo {
+    if info.Name == "list_nodes" {
+        if info.Custom == nil { info.Custom = map[string]string{} }
+        info.Custom["cache_ttl"] = "5m"
+    }
+    return info
+}),
+
+// Plug in Redis or any external cache.
+mx, _ = mcpx.New(ctx, cfg, mcpx.WithCache(&redisCache{client: rdb}))
+
+// Disable cache entirely.
+mx, _ = mcpx.New(ctx, cfg, mcpx.WithoutCache())
+```
+
+Cache options: `WithCache(Cache)`, `WithCacheTTL(d)`, `WithCacheSize(n)`, `WithoutCache()`, `WithCacheKey(fn)`.
+
+## Rejected-call observability
+
+`OnRejectedCall` fires before `AfterCall` on every path that rejects a call before reaching upstream:
+
+```go
+mcpx.WithOnRejectedCall(func(ctx context.Context, server, tool string, reason mcpx.RejectReason, err error) {
+    metrics.Inc("mcpx.rejected", "reason", string(reason))
+}),
+```
+
+Reasons: `RejectUnknownServer`, `RejectUnknownTool`, `RejectServerDown`, `RejectBeforeHookAbort`.
+
+## Connect callback
+
+`OnConnect` fires once per server after a successful initial connection, before `New` returns. The tools list is post-`MetaEnricher`:
+
+```go
+mcpx.WithOnConnect(func(server string, tools []mcpx.ToolInfo) {
+    log.Printf("connected to %s: %d tools", server, len(tools))
+}),
+```
+
+## Migrating from v0.3.x
+
+### `BeforeCallHook`
+
+```go
+// v0.3.x
+func(ctx context.Context, server string, tool mcpx.ToolInfo, args json.RawMessage) error
+
+// v0.4.0
+func(ctx context.Context, server, tool string, info mcpx.ToolInfo, args json.RawMessage) (context.Context, *mcpx.CallResult, error)
+```
+
+Return `(nil, nil, err)` to abort, `(nil, result, nil)` to short-circuit, `(newCtx, nil, nil)` to continue.
+
+### `AfterCallHook`
+
+```go
+// v0.3.x
+func(ctx context.Context, server string, tool mcpx.ToolInfo, args json.RawMessage, result *mcpx.CallResult, callErr error)
+
+// v0.4.0
+func(ctx context.Context, server, tool string, info mcpx.ToolInfo, args json.RawMessage, result *mcpx.CallResult, callErr error, duration time.Duration)
+```
+
+AfterCall now fires on **all** paths including rejections and cache hits.
+
+### `ResultTransformHook`
+
+```go
+// v0.3.x
+func(ctx context.Context, server string, tool mcpx.ToolInfo, text string) (string, error)
+
+// v0.4.0
+func(ctx context.Context, server, tool string, info mcpx.ToolInfo, result *mcpx.CallResult) error
+```
+
+Mutate `result.Text` and `result.Parts` in place.
 
 ## Tool metadata
 

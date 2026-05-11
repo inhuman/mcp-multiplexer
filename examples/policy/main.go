@@ -14,11 +14,11 @@ import (
 )
 
 func main() {
-	blockDestructive := mcpx.BeforeCallHook(func(_ context.Context, _ string, tool mcpx.ToolInfo, _ json.RawMessage) error {
-		if tool.Destructive {
-			return errors.New("blocked: destructive tool")
+	blockDestructive := mcpx.BeforeCallHook(func(_ context.Context, _, _ string, info mcpx.ToolInfo, _ json.RawMessage) (context.Context, *mcpx.CallResult, error) {
+		if info.Destructive {
+			return nil, nil, errors.New("blocked: destructive tool")
 		}
-		return nil
+		return nil, nil, nil
 	})
 
 	cfg := mcpx.MultiplexerConfig{

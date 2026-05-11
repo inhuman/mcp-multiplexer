@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -241,6 +242,71 @@ func TestMultiplexer_CloseIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	mx.Close()
 	require.NotPanics(t, func() { mx.Close() })
+}
+
+// === v0.4.0: OnConnect ===
+
+func TestOnConnect_FiresOncePerServer(t *testing.T) {
+	url1, cleanup1 := httpServer(t, echoTool("a"), echoTool("b"))
+	defer cleanup1()
+	url2, cleanup2 := httpServer(t, echoTool("c"))
+	defer cleanup2()
+
+	type connectEvent struct {
+		server string
+		tools  []string
+	}
+	var mu sync.Mutex
+	var events []connectEvent
+
+	mx, err := mcpx.New(t.Context(), mcpx.MultiplexerConfig{
+		Servers: []mcpx.ServerConfig{
+			{Name: "s1", Transport: mcpx.TransportHTTP, URL: url1},
+			{Name: "s2", Transport: mcpx.TransportHTTP, URL: url2},
+		},
+	},
+		mcpx.WithHTTPRetryMax(0),
+		mcpx.WithOnConnect(func(server string, tools []mcpx.ToolInfo) {
+			names := make([]string, len(tools))
+			for i, ti := range tools {
+				names[i] = ti.Name
+			}
+			mu.Lock()
+			events = append(events, connectEvent{server: server, tools: names})
+			mu.Unlock()
+		}),
+	)
+	require.NoError(t, err)
+	defer mx.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, events, 2, "OnConnect must fire once per server")
+	servers := map[string][]string{}
+	for _, e := range events {
+		servers[e.server] = e.tools
+	}
+	require.ElementsMatch(t, []string{"a", "b"}, servers["s1"])
+	require.ElementsMatch(t, []string{"c"}, servers["s2"])
+}
+
+func TestOnConnect_PanicRecovered(t *testing.T) {
+	url, cleanup := httpServer(t, echoTool("e"))
+	defer cleanup()
+
+	require.NotPanics(t, func() {
+		mx, err := mcpx.New(t.Context(), mcpx.MultiplexerConfig{
+			Servers: []mcpx.ServerConfig{{Name: "s", Transport: mcpx.TransportHTTP, URL: url}},
+		},
+			mcpx.WithHTTPRetryMax(0),
+			mcpx.WithOnConnect(func(_ string, _ []mcpx.ToolInfo) {
+				panic("boom")
+			}),
+		)
+		if err == nil {
+			mx.Close()
+		}
+	})
 }
 
 // keep linter happy

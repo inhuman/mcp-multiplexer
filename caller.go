@@ -40,35 +40,34 @@ func (e *ErrInvalidArgs) Error() string {
 
 // CallTool invokes the named tool on the named server with the given JSON
 // arguments. It runs all configured BeforeCall/AfterCall/ResultTransform
-// hooks. The argsJSON parameter must be a JSON object (or empty/nil).
+// hooks and consults the response cache when the tool is cacheable.
+// The argsJSON parameter must be a JSON object (or empty/nil).
 //
 // Errors returned:
-//   - ErrServerNotFound, ErrToolNotFound — caller mistake.
+//   - ErrServerNotFound, ErrToolNotFound, ErrServerDown — caller mistake.
 //   - *ErrInvalidArgs — args contain unresolved placeholders or schema violations.
 //   - errors from BeforeCallHook are propagated as-is.
 //   - upstream MCP errors are wrapped via fmt.Errorf("server %s: %w", ...).
 func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, argsJSON json.RawMessage) (*CallResult, error) {
+	start := time.Now()
+
 	mx.mu.RLock()
 	entry, ok := mx.servers[server]
 	mx.mu.RUnlock()
 
 	if !ok {
-		return nil, fmt.Errorf("%w: %q (available: %s)",
+		err := fmt.Errorf("%w: %q (available: %s)",
 			ErrServerNotFound, server, strings.Join(mx.ServerNames(), ", "))
+		mx.fireRejected(ctx, server, toolName, RejectUnknownServer, err)
+		mx.runAfterCall(ctx, server, toolName, ToolInfo{}, argsJSON, nil, err, time.Since(start))
+		return nil, err
 	}
 
-	// Fast-fail if the supervisor has marked this server as down.
 	entry.mu.RLock()
 	entryState := entry.state
 	entryTools := entry.tools
 	entrySess := entry.session
 	entry.mu.RUnlock()
-
-	if entryState == ServerStateDown {
-		return nil, fmt.Errorf("%w: %q", ErrServerDown, server)
-	}
-
-	start := time.Now()
 
 	var toolMeta ToolInfo
 	found := false
@@ -81,9 +80,20 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 	}
 	if !found {
 		err := fmt.Errorf("%w: %s on server %s", ErrToolNotFound, toolName, server)
+		mx.fireRejected(ctx, server, toolName, RejectUnknownTool, err)
+		mx.runAfterCall(ctx, server, toolName, toolMeta, argsJSON, nil, err, time.Since(start))
 		safeRecordCall(mx.opts.metrics, server, toolName, time.Since(start), err)
 		return nil, err
 	}
+
+	if entryState == ServerStateDown {
+		err := fmt.Errorf("%w: %q", ErrServerDown, server)
+		mx.fireRejected(ctx, server, toolName, RejectServerDown, err)
+		mx.runAfterCall(ctx, server, toolName, toolMeta, argsJSON, nil, err, time.Since(start))
+		return nil, err
+	}
+
+	// --- args transform -------------------------------------------------------
 
 	params := &mcp.CallToolParams{Name: toolName}
 	finalArgs := argsJSON
@@ -100,7 +110,6 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 		transformed = applyFieldMap(transformed, entry.config.FieldMap)
 		params.Arguments = transformed
 
-		// Re-serialise after transform so hooks see the exact bytes that go upstream.
 		if reSerialised, err := json.Marshal(transformed); err == nil {
 			finalArgs = reSerialised
 		}
@@ -116,12 +125,48 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 		}
 	}
 
+	// --- BeforeCall chain ----------------------------------------------------
+
 	for _, hook := range mx.opts.beforeCall {
-		if err := hook(ctx, server, toolMeta, finalArgs); err != nil {
-			mx.runAfterCall(ctx, server, toolMeta, finalArgs, nil, err)
+		newCtx, shortResult, err := hook(ctx, server, toolName, toolMeta, finalArgs)
+		if err != nil {
+			mx.fireRejected(ctx, server, toolName, RejectBeforeHookAbort, err)
+			mx.runAfterCall(ctx, server, toolName, toolMeta, finalArgs, nil, err, time.Since(start))
 			return nil, err
 		}
+		if shortResult != nil {
+			// Short-circuit: skip upstream and ResultTransform.
+			mx.runAfterCall(ctx, server, toolName, toolMeta, finalArgs, shortResult, nil, time.Since(start))
+			return shortResult, nil
+		}
+		if newCtx != nil {
+			ctx = newCtx
+		}
 	}
+
+	// --- cache lookup --------------------------------------------------------
+
+	activeCache := mx.activeCache()
+	keyFn := mx.opts.cacheKey
+	if keyFn == nil {
+		keyFn = defaultCacheKey
+	}
+
+	if activeCache != nil && isCacheable(toolMeta) {
+		if CacheScope(ctx) == "" {
+			mx.cacheScopeWarnOnce.Do(func() {
+				mx.opts.logger.Warn("mcpx: cache enabled but no scope set; results may leak across tenants — use WithCacheScope(ctx, id)")
+			})
+		}
+		cacheKey := keyFn(ctx, server, toolName, finalArgs)
+		if cached, ok := activeCache.Get(ctx, cacheKey); ok {
+			hitCtx := markCacheHit(ctx)
+			mx.runAfterCall(hitCtx, server, toolName, toolMeta, finalArgs, cached, nil, time.Since(start))
+			return cached, nil
+		}
+	}
+
+	// --- upstream call -------------------------------------------------------
 
 	timeout := effectiveTimeout(entry.config.CallTimeout, mx.opts.callTimeout)
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -139,32 +184,61 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 		}
 		mx.opts.logger.Error("mcpx: call failed",
 			F("server", server), F("tool", toolName), F("error", wrapped.Error()))
-		mx.runAfterCall(ctx, server, toolMeta, finalArgs, nil, wrapped)
+		mx.runAfterCall(ctx, server, toolName, toolMeta, finalArgs, nil, wrapped, dur)
 		safeRecordCall(mx.opts.metrics, server, toolName, dur, wrapped)
 		return nil, wrapped
 	}
 
 	result := buildResult(rawResult)
 
+	// --- ResultTransform chain -----------------------------------------------
+
 	for _, hook := range mx.opts.resultTransform {
-		newText, err := hook(ctx, server, toolMeta, result.Text)
-		if err != nil {
-			mx.runAfterCall(ctx, server, toolMeta, finalArgs, result, err)
+		if err := hook(ctx, server, toolName, toolMeta, result); err != nil {
+			mx.runAfterCall(ctx, server, toolName, toolMeta, finalArgs, result, err, dur)
 			safeRecordCall(mx.opts.metrics, server, toolName, dur, err)
 			return nil, err
 		}
-		result.Text = newText
 	}
 
-	mx.runAfterCall(ctx, server, toolMeta, finalArgs, result, nil)
+	// --- cache store ---------------------------------------------------------
+
+	if activeCache != nil && isCacheable(toolMeta) && !result.IsError {
+		ttl := toolTTL(toolMeta, mx.opts.cacheTTL, mx.opts.logger, &mx.cacheTTLWarnMap)
+		cacheKey := keyFn(ctx, server, toolName, finalArgs)
+		activeCache.Set(ctx, cacheKey, result, ttl)
+	}
+
+	mx.runAfterCall(ctx, server, toolName, toolMeta, finalArgs, result, nil, dur)
 	safeRecordCall(mx.opts.metrics, server, toolName, dur, nil)
 	return result, nil
 }
 
-func (mx *Multiplexer) runAfterCall(ctx context.Context, server string, tool ToolInfo, args json.RawMessage, result *CallResult, callErr error) {
-	for _, hook := range mx.opts.afterCall {
-		hook(ctx, server, tool, args, result, callErr)
+// activeCache returns the cache to use, or nil when caching is disabled.
+func (mx *Multiplexer) activeCache() Cache {
+	if mx.opts.cacheDisabled {
+		return nil
 	}
+	if mx.opts.cache != nil {
+		return mx.opts.cache
+	}
+	return mx.builtinCache
+}
+
+func (mx *Multiplexer) runAfterCall(ctx context.Context, server, tool string, info ToolInfo, args json.RawMessage, result *CallResult, callErr error, duration time.Duration) {
+	for _, hook := range mx.opts.afterCall {
+		hook(ctx, server, tool, info, args, result, callErr, duration)
+	}
+}
+
+func (mx *Multiplexer) fireRejected(ctx context.Context, server, tool string, reason RejectReason, err error) {
+	if mx.opts.onRejectedCall == nil {
+		return
+	}
+	func() {
+		defer func() { recover() }() //nolint:errcheck
+		mx.opts.onRejectedCall(ctx, server, tool, reason, err)
+	}()
 }
 
 // effectiveTimeout returns perServer if positive, otherwise global.
