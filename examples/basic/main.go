@@ -13,6 +13,13 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg := mcpx.MultiplexerConfig{
 		Servers: []mcpx.ServerConfig{
 			{
@@ -32,16 +39,15 @@ func main() {
 	ctx := context.Background()
 	mx, err := mcpx.New(ctx, cfg)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "connect:", err)
-		os.Exit(1)
+		return fmt.Errorf("connect: %w", err)
 	}
 	defer mx.Close()
 
 	args, _ := json.Marshal(map[string]any{"path": "/tmp"})
 	result, err := mx.CallTool(ctx, "files", "list_directory", args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "call:", err)
-		os.Exit(1)
+		return fmt.Errorf("call: %w", err)
 	}
 	fmt.Println(result.Text)
+	return nil
 }
