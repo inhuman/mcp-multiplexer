@@ -29,6 +29,7 @@ var (
 	_ mcpx.AuthFunc            = auth.HeaderToken
 	_ mcpx.OnReconnectFunc     = func(_ string, _ error) {}
 	_ mcpx.ServerState         = mcpx.ServerStateConnected
+	_ mcpx.OnToolsChangedFunc  = func(_ string, _, _ []mcpx.ToolInfo) {}
 )
 
 func TestAPISurface_NopLoggerAndField(t *testing.T) {
@@ -73,5 +74,10 @@ func TestAPISurface_WithArgsTransformerAndClientIdentity(t *testing.T) {
 
 func TestAPISurface_WithAuthFunc(t *testing.T) {
 	opt := mcpx.WithAuthFunc(auth.Bearer)
+	require.NotNil(t, opt)
+}
+
+func TestAPISurface_WithOnToolsChanged(t *testing.T) {
+	opt := mcpx.WithOnToolsChanged(func(_ string, _, _ []mcpx.ToolInfo) {})
 	require.NotNil(t, opt)
 }

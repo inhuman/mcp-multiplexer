@@ -111,7 +111,7 @@ func (mx *Multiplexer) reconnectServer(ctx context.Context, name string) {
 		cfg := entry.config
 		mx.mu.RUnlock()
 
-		newEntry, err := mx.connect(ctx, cfg)
+		newEntry, err := mx.connect(ctx, cfg, entry.refreshCh)
 		if err != nil {
 			mx.opts.logger.Error("mcpx: reconnect failed",
 				F("server", name), F("error", err.Error()))

@@ -28,7 +28,8 @@ type serverEntry struct {
 	session      *mcp.ClientSession
 	tools        []ToolInfo
 	state        ServerState
-	reconnecting atomic.Bool // true while reconnectServer goroutine is running
+	reconnecting atomic.Bool   // true while reconnectServer goroutine is running
+	refreshCh    chan struct{} // signals tool-list refresh; capacity 1, immutable after init
 }
 
 // New connects to all servers in cfg, caches their tool lists, and returns a
@@ -88,7 +89,7 @@ func New(ctx context.Context, cfg MultiplexerConfig, opts ...Option) (*Multiplex
 			sc = sc.withKindDefaults(ks)
 		}
 		wg.Go(func() {
-			entry, err := mx.connect(ctx, sc)
+			entry, err := mx.connect(ctx, sc, nil)
 			if err != nil {
 				o.logger.Error("mcpx: failed to connect", F("server", sc.Name), F("error", err.Error()))
 				return
@@ -99,6 +100,10 @@ func New(ctx context.Context, cfg MultiplexerConfig, opts ...Option) (*Multiplex
 		})
 	}
 	wg.Wait()
+
+	for name, entry := range mx.servers {
+		go mx.runToolRefresh(ctx, name, entry)
+	}
 
 	if o.healthCheckInterval > 0 {
 		go mx.runSupervisor(ctx)
@@ -267,16 +272,33 @@ func (mx *Multiplexer) Close() {
 	}
 }
 
-func (mx *Multiplexer) connect(ctx context.Context, cfg ServerConfig) (*serverEntry, error) {
+// connect establishes a new MCP session for cfg and returns a populated serverEntry.
+// refreshCh is the channel the ToolListChangedHandler will signal; pass nil to allocate
+// a new one. Pass the persistent entry's refreshCh on reconnect to reuse the same
+// channel and drain goroutine.
+func (mx *Multiplexer) connect(ctx context.Context, cfg ServerConfig, refreshCh chan struct{}) (*serverEntry, error) {
+	if refreshCh == nil {
+		refreshCh = make(chan struct{}, 1)
+	}
+
 	transport, err := newTransport(ctx, cfg, mx.opts)
 	if err != nil {
 		return nil, err
 	}
 
+	clientOpts := &mcp.ClientOptions{
+		ToolListChangedHandler: func(_ context.Context, _ *mcp.ToolListChangedRequest) {
+			select {
+			case refreshCh <- struct{}{}:
+			default: // already queued; coalesce
+			}
+		},
+	}
+
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    mx.opts.clientName,
 		Version: mx.opts.clientVersion,
-	}, nil)
+	}, clientOpts)
 
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
@@ -289,7 +311,7 @@ func (mx *Multiplexer) connect(ctx context.Context, cfg ServerConfig) (*serverEn
 		return nil, fmt.Errorf("list tools %s: %w", cfg.Name, err)
 	}
 
-	return &serverEntry{config: cfg, session: session, tools: tools, state: ServerStateConnected}, nil
+	return &serverEntry{config: cfg, session: session, tools: tools, state: ServerStateConnected, refreshCh: refreshCh}, nil
 }
 
 func (mx *Multiplexer) fetchTools(ctx context.Context, serverName string, session *mcp.ClientSession) ([]ToolInfo, error) {

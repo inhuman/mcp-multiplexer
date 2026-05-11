@@ -17,6 +17,17 @@
   liveness. When health-check is disabled, always returns `ServerStateConnected`.
 - **Fast-fail in `CallTool`**: when a server is `down`, returns `ErrServerDown`
   immediately without waiting for the call timeout.
+- **Automatic tool-list refresh**: the multiplexer subscribes to
+  `notifications/tools/list_changed` from every connected server. When a server
+  adds or removes tools at runtime, the per-server cache is updated automatically
+  without restarting the multiplexer. Burst notifications are coalesced (at most
+  one queued refresh per server at any time). If the refresh fails, the stale
+  cache is retained and the error is logged. No new configuration is required.
+- **`type OnToolsChangedFunc func(server string, before, after []ToolInfo)`** —
+  callback type invoked after each successful refresh that changes the tool list.
+  Panics in the callback are recovered by the library.
+- **`WithOnToolsChanged(fn OnToolsChangedFunc) Option`** — registers the callback.
+  Passing nil clears any previously registered callback.
 
 All changes are purely additive; no existing API is modified.
 
