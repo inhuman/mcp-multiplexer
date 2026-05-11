@@ -27,6 +27,8 @@ var (
 	_ mcpx.CustomTransformer   = func(args map[string]any) map[string]any { return args }
 	_ mcpx.AuthFunc            = auth.Bearer
 	_ mcpx.AuthFunc            = auth.HeaderToken
+	_ mcpx.OnReconnectFunc     = func(_ string, _ error) {}
+	_ mcpx.ServerState         = mcpx.ServerStateConnected
 )
 
 func TestAPISurface_NopLoggerAndField(t *testing.T) {

@@ -3,6 +3,7 @@ package mcpx_test
 import (
 	"errors"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,8 +50,11 @@ func TestHealthCheck_SupervisorReconnects(t *testing.T) {
 	srv := newRestartableServer(t)
 	defer srv.Stop()
 
-	var reconnectErrors []error
-	var callCount atomic.Int64
+	var (
+		mu             sync.Mutex
+		reconnectErrors []error
+		callCount      atomic.Int64
+	)
 
 	mx, err := mcpx.New(ctx, mcpx.MultiplexerConfig{
 		Servers: []mcpx.ServerConfig{
@@ -60,8 +64,10 @@ func TestHealthCheck_SupervisorReconnects(t *testing.T) {
 		mcpx.WithHTTPRetryMax(0),
 		mcpx.WithHealthCheck(80*time.Millisecond),
 		mcpx.WithOnReconnect(func(server string, err error) {
-			callCount.Add(1)
+			mu.Lock()
 			reconnectErrors = append(reconnectErrors, err)
+			mu.Unlock()
+			callCount.Add(1)
 		}),
 	)
 	require.NoError(t, err)
@@ -83,7 +89,10 @@ func TestHealthCheck_SupervisorReconnects(t *testing.T) {
 		return callCount.Load() > 0
 	}, 4*time.Second, 50*time.Millisecond, "OnReconnect should have been called with error")
 
-	require.Error(t, reconnectErrors[0], "first callback error should be non-nil")
+	mu.Lock()
+	firstErr := reconnectErrors[0]
+	mu.Unlock()
+	require.Error(t, firstErr, "first callback error should be non-nil")
 
 	// Restart the server on a new URL and update config.
 	srv2 := mcptest.NewServer(echoTool("echo"))
