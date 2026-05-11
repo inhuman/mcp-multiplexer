@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -22,9 +23,12 @@ type Multiplexer struct {
 }
 
 type serverEntry struct {
-	config  ServerConfig
-	session *mcp.ClientSession
-	tools   []ToolInfo
+	config       ServerConfig
+	mu           sync.RWMutex // guards session, tools, state
+	session      *mcp.ClientSession
+	tools        []ToolInfo
+	state        ServerState
+	reconnecting atomic.Bool // true while reconnectServer goroutine is running
 }
 
 // New connects to all servers in cfg, caches their tool lists, and returns a
@@ -44,6 +48,11 @@ func New(ctx context.Context, cfg MultiplexerConfig, opts ...Option) (*Multiplex
 		kindHints: cfg.KindHints,
 		cancel:    cancel,
 		opts:      o,
+	}
+
+	if o.healthCheckSet && o.healthCheckInterval <= 0 {
+		cancel()
+		return nil, fmt.Errorf("mcpx: WithHealthCheck interval must be positive")
 	}
 
 	seen := make(map[string]bool, len(cfg.Servers))
@@ -90,6 +99,10 @@ func New(ctx context.Context, cfg MultiplexerConfig, opts ...Option) (*Multiplex
 		})
 	}
 	wg.Wait()
+
+	if o.healthCheckInterval > 0 {
+		go mx.runSupervisor(ctx)
+	}
 
 	return mx, nil
 }
@@ -193,7 +206,10 @@ func (mx *Multiplexer) ToolsForServers(names []string) []ToolInfo {
 		if !ok {
 			continue
 		}
-		for _, t := range entry.tools {
+		entry.mu.RLock()
+		tools := entry.tools
+		entry.mu.RUnlock()
+		for _, t := range tools {
 			key := name + "/" + t.Name
 			if _, dup := seen[key]; !dup {
 				seen[key] = struct{}{}
@@ -211,7 +227,24 @@ func (mx *Multiplexer) AllTools() []ToolInfo {
 	defer mx.mu.RUnlock()
 	var result []ToolInfo
 	for _, entry := range mx.servers {
+		entry.mu.RLock()
 		result = append(result, entry.tools...)
+		entry.mu.RUnlock()
+	}
+	return result
+}
+
+// ServerStatus returns a snapshot of the liveness state of every registered
+// server. When health-check is disabled (WithHealthCheck not called), all
+// values are [ServerStateConnected].
+func (mx *Multiplexer) ServerStatus() map[string]ServerState {
+	mx.mu.RLock()
+	defer mx.mu.RUnlock()
+	result := make(map[string]ServerState, len(mx.servers))
+	for name, entry := range mx.servers {
+		entry.mu.RLock()
+		result[name] = entry.state
+		entry.mu.RUnlock()
 	}
 	return result
 }
@@ -222,7 +255,13 @@ func (mx *Multiplexer) Close() {
 	mx.mu.Lock()
 	defer mx.mu.Unlock()
 	for name, entry := range mx.servers {
-		if err := entry.session.Close(); err != nil {
+		entry.mu.RLock()
+		sess := entry.session
+		entry.mu.RUnlock()
+		if sess == nil {
+			continue
+		}
+		if err := sess.Close(); err != nil {
 			mx.opts.logger.Error("mcpx: close session", F("server", name), F("error", err.Error()))
 		}
 	}
@@ -250,7 +289,7 @@ func (mx *Multiplexer) connect(ctx context.Context, cfg ServerConfig) (*serverEn
 		return nil, fmt.Errorf("list tools %s: %w", cfg.Name, err)
 	}
 
-	return &serverEntry{config: cfg, session: session, tools: tools}, nil
+	return &serverEntry{config: cfg, session: session, tools: tools, state: ServerStateConnected}, nil
 }
 
 func (mx *Multiplexer) fetchTools(ctx context.Context, serverName string, session *mcp.ClientSession) ([]ToolInfo, error) {

@@ -46,9 +46,20 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 			ErrServerNotFound, server, strings.Join(mx.ServerNames(), ", "))
 	}
 
+	// Fast-fail if the supervisor has marked this server as down.
+	entry.mu.RLock()
+	entryState := entry.state
+	entryTools := entry.tools
+	entrySess := entry.session
+	entry.mu.RUnlock()
+
+	if entryState == ServerStateDown {
+		return nil, fmt.Errorf("%w: %q", ErrServerDown, server)
+	}
+
 	var toolMeta ToolInfo
 	found := false
-	for _, ti := range entry.tools {
+	for _, ti := range entryTools {
 		if ti.Name == toolName {
 			toolMeta = ti
 			found = true
@@ -91,7 +102,7 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 	callCtx, cancel := context.WithTimeout(ctx, mx.opts.callTimeout)
 	defer cancel()
 
-	rawResult, callErr := entry.session.CallTool(callCtx, params)
+	rawResult, callErr := entrySess.CallTool(callCtx, params)
 	if callErr != nil {
 		var wrapped error
 		if callCtx.Err() != nil && errors.Is(callCtx.Err(), context.DeadlineExceeded) {

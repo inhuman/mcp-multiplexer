@@ -6,17 +6,20 @@ import "time"
 type Option func(*options)
 
 type options struct {
-	logger             Logger
-	beforeCall         []BeforeCallHook
-	afterCall          []AfterCallHook
-	resultTransform    []ResultTransformHook
-	metaEnrichers      []MetaEnricher
-	customTransformers map[string]CustomTransformer
-	authFunc           AuthFunc
-	callTimeout        time.Duration
-	httpRetryMax       int
-	clientName         string
-	clientVersion      string
+	logger              Logger
+	beforeCall          []BeforeCallHook
+	afterCall           []AfterCallHook
+	resultTransform     []ResultTransformHook
+	metaEnrichers       []MetaEnricher
+	customTransformers  map[string]CustomTransformer
+	authFunc            AuthFunc
+	callTimeout         time.Duration
+	httpRetryMax        int
+	clientName          string
+	clientVersion       string
+	healthCheckInterval time.Duration // 0 = disabled
+	healthCheckSet      bool          // true when WithHealthCheck was called
+	onReconnect         OnReconnectFunc
 }
 
 func defaultOptions() *options {
@@ -100,6 +103,27 @@ func WithHTTPRetryMax(n int) Option {
 // no chaining is provided.
 func WithAuthFunc(fn AuthFunc) Option {
 	return func(o *options) { o.authFunc = fn }
+}
+
+// WithHealthCheck enables the liveness supervisor. The supervisor probes each
+// server at the given interval using a ListTools call and reconnects with
+// exponential backoff (1 s → 2 s → … → 60 s) on failure.
+// interval must be positive; zero or negative values cause [New] to return an error.
+// Without this option the supervisor does not start and [Multiplexer.ServerStatus]
+// always returns [ServerStateConnected] for every registered server.
+func WithHealthCheck(interval time.Duration) Option {
+	return func(o *options) {
+		o.healthCheckInterval = interval
+		o.healthCheckSet = true
+	}
+}
+
+// WithOnReconnect registers a callback invoked on every reconnect attempt.
+// err is nil on success, non-nil on failure. Registering more than once
+// overwrites the previous value. The callback runs synchronously from the
+// supervisor goroutine and must not block for extended periods.
+func WithOnReconnect(fn OnReconnectFunc) Option {
+	return func(o *options) { o.onReconnect = fn }
 }
 
 // WithClientIdentity overrides the MCP client name/version sent during
