@@ -50,6 +50,7 @@ const (
 	RejectUnknownTool     RejectReason = "unknown_tool"
 	RejectServerDown      RejectReason = "server_down"
 	RejectBeforeHookAbort RejectReason = "before_hook_abort"
+	RejectInvalidArgs     RejectReason = "invalid_args"
 )
 
 // OnRejectedCallFunc is called when CallTool is rejected before dispatch.

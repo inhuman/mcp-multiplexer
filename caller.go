@@ -60,6 +60,7 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 			ErrServerNotFound, server, strings.Join(mx.ServerNames(), ", "))
 		mx.fireRejected(ctx, server, toolName, RejectUnknownServer, err)
 		mx.runAfterCall(ctx, server, toolName, ToolInfo{}, argsJSON, nil, err, time.Since(start))
+		safeRecordCall(mx.opts.metrics, server, toolName, time.Since(start), err)
 		return nil, err
 	}
 
@@ -90,6 +91,7 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 		err := fmt.Errorf("%w: %q", ErrServerDown, server)
 		mx.fireRejected(ctx, server, toolName, RejectServerDown, err)
 		mx.runAfterCall(ctx, server, toolName, toolMeta, argsJSON, nil, err, time.Since(start))
+		safeRecordCall(mx.opts.metrics, server, toolName, time.Since(start), err)
 		return nil, err
 	}
 
@@ -100,10 +102,18 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 	if len(argsJSON) > 0 {
 		var rawArgs map[string]any
 		if err := json.Unmarshal(argsJSON, &rawArgs); err != nil {
-			return nil, fmt.Errorf("mcpx: invalid args json: %w", err)
+			wrapped := fmt.Errorf("mcpx: invalid args json: %w", err)
+			mx.fireRejected(ctx, server, toolName, RejectInvalidArgs, wrapped)
+			mx.runAfterCall(ctx, server, toolName, toolMeta, argsJSON, nil, wrapped, time.Since(start))
+			safeRecordCall(mx.opts.metrics, server, toolName, time.Since(start), wrapped)
+			return nil, wrapped
 		}
 		if bad := findInvalidArgs(rawArgs); len(bad) > 0 {
-			return nil, &ErrInvalidArgs{BadFields: bad}
+			ivErr := &ErrInvalidArgs{BadFields: bad}
+			mx.fireRejected(ctx, server, toolName, RejectInvalidArgs, ivErr)
+			mx.runAfterCall(ctx, server, toolName, toolMeta, argsJSON, nil, ivErr, time.Since(start))
+			safeRecordCall(mx.opts.metrics, server, toolName, time.Since(start), ivErr)
+			return nil, ivErr
 		}
 		singularMap := mergedSingularMap(mx.opts.resourceSingular, entry.config.ResourceSingular)
 		transformed := entry.config.ArgsTransformers.applyAll(rawArgs, mx.opts.customTransformers, singularMap)
@@ -120,6 +130,8 @@ func (mx *Multiplexer) CallTool(ctx context.Context, server, toolName string, ar
 	if mx.opts.schemaValidation {
 		if errs := validateSchema(toolMeta.InputSchema, finalArgs); len(errs) > 0 {
 			ivErr := &ErrInvalidArgs{SchemaErrors: errs}
+			mx.fireRejected(ctx, server, toolName, RejectInvalidArgs, ivErr)
+			mx.runAfterCall(ctx, server, toolName, toolMeta, finalArgs, nil, ivErr, time.Since(start))
 			safeRecordCall(mx.opts.metrics, server, toolName, time.Since(start), ivErr)
 			return nil, ivErr
 		}

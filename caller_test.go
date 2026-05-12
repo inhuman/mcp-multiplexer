@@ -839,6 +839,39 @@ func TestOnRejectedCall_PanicRecovered(t *testing.T) {
 	})
 }
 
+func TestOnRejectedCall_InvalidArgs(t *testing.T) {
+	srv := mcptest.NewServer(echoToolSpec("t"))
+	ts := httptest.NewServer(srv.HTTPHandler())
+	defer ts.Close()
+	defer srv.Close()
+
+	var gotReason mcpx.RejectReason
+	var afterFired atomic.Bool
+	var afterErr error
+	mx, err := mcpx.New(t.Context(), mcpx.MultiplexerConfig{
+		Servers: []mcpx.ServerConfig{{Name: "s", Transport: mcpx.TransportHTTP, URL: ts.URL}},
+	},
+		mcpx.WithHTTPRetryMax(0),
+		mcpx.WithoutCache(),
+		mcpx.WithOnRejectedCall(func(_ context.Context, _, _ string, reason mcpx.RejectReason, _ error) {
+			gotReason = reason
+		}),
+		mcpx.WithAfterCall(func(_ context.Context, _, _ string, _ mcpx.ToolInfo, _ json.RawMessage, _ *mcpx.CallResult, callErr error, _ time.Duration) {
+			afterFired.Store(true)
+			afterErr = callErr
+		}),
+	)
+	require.NoError(t, err)
+	defer mx.Close()
+
+	_, err = mx.CallTool(t.Context(), "s", "t", json.RawMessage(`{"x":"undefined"}`))
+	var ivErr *mcpx.ErrInvalidArgs
+	require.ErrorAs(t, err, &ivErr)
+	require.Equal(t, mcpx.RejectInvalidArgs, gotReason)
+	require.True(t, afterFired.Load(), "AfterCall must fire on RejectInvalidArgs")
+	require.ErrorAs(t, afterErr, &ivErr)
+}
+
 // === v0.4.0: Cache ===
 
 func buildCacheableSrv(t *testing.T) (url string, calls *atomic.Int64) {

@@ -26,8 +26,9 @@
   - Per-tool TTL via `ToolInfo.Custom["cache_ttl"]` (parses `time.Duration` format).
   - Warn-once (per Multiplexer lifetime) when a cacheable call has no scope set.
 - **`(*CallResult).Clone() *CallResult`** — exported deep-copy method; `Data` and `Raw` byte slices are independently allocated. Nil receiver returns nil.
-- **`RejectReason`** type and four constants: `RejectUnknownServer`, `RejectUnknownTool`, `RejectServerDown`, `RejectBeforeHookAbort`.
+- **`RejectReason`** type and five constants: `RejectUnknownServer`, `RejectUnknownTool`, `RejectServerDown`, `RejectBeforeHookAbort`, `RejectInvalidArgs`.
 - **`OnRejectedCallFunc`** + `WithOnRejectedCall` option — fires before AfterCall on every rejection path; panics recovered.
+- AfterCall, OnRejectedCall, and `Metrics.RecordCall` now fire consistently on **all** rejection paths, including invalid-args JSON, placeholder bad fields, schema-validation failures, server-not-found, and server-down. Observability is no longer asymmetric across rejection reasons.
 - **`OnConnectFunc`** + `WithOnConnect` option — fires once per server after initial successful connect (before `New` returns); tools list is post-MetaEnricher; panics recovered.
 
 ### Migrating from v0.3.x
