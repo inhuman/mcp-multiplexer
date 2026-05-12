@@ -98,9 +98,17 @@ func New(ctx context.Context, cfg MultiplexerConfig, opts ...Option) (*Multiplex
 			sc = sc.withKindDefaults(ks)
 		}
 		wg.Go(func() {
-			entry, err := mx.connect(ctx, sc, nil)
+			refreshCh := make(chan struct{}, 1)
+			entry, err := mx.connect(ctx, sc, refreshCh)
 			if err != nil {
 				o.logger.Error("mcpx: failed to connect", F("server", sc.Name), F("error", err.Error()))
+				// Register a down entry so the supervisor can retry.
+				stub := &serverEntry{config: sc, state: ServerStateDown, refreshCh: refreshCh}
+				stub.reconnecting.Store(true)
+				mu.Lock()
+				mx.servers[sc.Name] = stub
+				mu.Unlock()
+				go mx.reconnectServer(ctx, sc.Name)
 				return
 			}
 			mu.Lock()
@@ -138,13 +146,19 @@ type KindGroup struct {
 // ConfigHints returns the kind_hints map from MultiplexerConfig (may be nil).
 func (mx *Multiplexer) ConfigHints() map[string][]string { return mx.kindHints }
 
-// ServerNames returns the sorted list of registered MCP server names.
+// ServerNames returns the sorted list of live (connected) MCP server names.
+// Servers that are currently down (initial connect failed or lost) are excluded.
 func (mx *Multiplexer) ServerNames() []string {
 	mx.mu.RLock()
 	defer mx.mu.RUnlock()
 	names := make([]string, 0, len(mx.servers))
-	for n := range mx.servers {
-		names = append(names, n)
+	for n, e := range mx.servers {
+		e.mu.RLock()
+		st := e.state
+		e.mu.RUnlock()
+		if st != ServerStateDown {
+			names = append(names, n)
+		}
 	}
 	slices.Sort(names)
 	return names
