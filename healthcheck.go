@@ -97,8 +97,10 @@ func (mx *Multiplexer) reconnectServer(ctx context.Context, name string) {
 	}
 
 	var backoff time.Duration
+	var attempt int
 	for {
 		backoff = nextBackoff(backoff)
+		attempt++
 
 		select {
 		case <-ctx.Done():
@@ -107,6 +109,9 @@ func (mx *Multiplexer) reconnectServer(ctx context.Context, name string) {
 		case <-time.After(backoff):
 		}
 
+		mx.opts.logger.Info("mcpx: reconnect attempt",
+			F("server", name), F("attempt", fmt.Sprintf("%d", attempt)), F("backoff", backoff.String()))
+
 		mx.mu.RLock()
 		cfg := entry.config
 		mx.mu.RUnlock()
@@ -114,7 +119,7 @@ func (mx *Multiplexer) reconnectServer(ctx context.Context, name string) {
 		newEntry, err := mx.connect(ctx, cfg, entry.refreshCh)
 		if err != nil {
 			mx.opts.logger.Error("mcpx: reconnect failed",
-				F("server", name), F("error", err.Error()))
+				F("server", name), F("attempt", fmt.Sprintf("%d", attempt)), F("error", err.Error()))
 			if mx.opts.onReconnect != nil {
 				mx.opts.onReconnect(name, err)
 			}
